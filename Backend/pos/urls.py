@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
-    UserViewSet, ShopViewSet, CustomerViewSet, DebtToBePaidViewSet,
+     LowStockVariantReportView, UserViewSet, ShopViewSet, CustomerViewSet, DebtToBePaidViewSet,
     ContentViewSet, BannerViewSet, MonthlyTotalPayrollView ,
     CategoryViewSet, BrandViewSet, ColorViewSet, SizeViewSet, SupplierViewSet,
     ProductViewSet, WasteProductViewSet, OrderViewSet, ShopReportView, ProductVariantViewSet, ExpenseViewSet, AdjustmentViewSet
@@ -36,7 +36,7 @@ urlpatterns = [
     path('', include(router.urls)),
     path('shop_report/', ShopReportView.as_view(), name='shop_report'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-
+    path('low-stock/', LowStockVariantReportView.as_view(), name='low-stock-list'),
     path('payrolls/total/', MonthlyTotalPayrollView.as_view(), name='total-monthly-payroll'),
     path("signup/", SignupView.as_view(), name="signup"),
     path("login/", LoginView.as_view(), name="login"),

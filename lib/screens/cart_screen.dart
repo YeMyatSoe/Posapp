@@ -12,10 +12,8 @@ import 'package:http/http.dart' as http;
 import '../providers/cart_provider.dart';
 import '../widgets/menu_bar.dart';
 
-// CRITICAL FIX: API Constants & Type Definition
 const String _BASE_URL = 'http://10.0.2.2:8000/api';
 const String _REFRESH_URL = 'http://10.0.2.2:8000/api/token/refresh/';
-typedef ApiCallFunction = Future<http.Response> Function(String method, String url, {Map<String, dynamic>? payload});
 
 class Customer {
   final int id;
@@ -39,17 +37,24 @@ class _CartScreenState extends State<CartScreen> {
   String? _savedPrinterAddress;
   bool isLoadingToken = true;
 
-  // NEW: Fields for customer, paid amount, payment method
   int? _selectedCustomerId;
   double _paidAmount = 0;
   String _paymentMethod = 'CASH';
   List<Customer> _customers = [];
+  late TextEditingController _paidAmountController;
 
   @override
   void initState() {
     super.initState();
+    _paidAmountController = TextEditingController();
     _loadTokenAndPrinter();
-    _fetchCustomers(); // Load customers
+    _fetchCustomers();
+  }
+
+  @override
+  void dispose() {
+    _paidAmountController.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchCustomers() async {
@@ -61,27 +66,17 @@ class _CartScreenState extends State<CartScreen> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as List;
         setState(() {
-          _customers = data.map((c) => Customer(
-            id: c['id'],
-            name: c['name'],
-          )).toList();
+          _customers = data
+              .map((c) => Customer(id: c['id'], name: c['name']))
+              .toList();
         });
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to fetch customers: ${response.statusCode}')),
-          );
-        }
+        _showMessage('Failed to fetch customers: ${response.statusCode}');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error fetching customers: $e')),
-        );
-      }
+      _showMessage('Error fetching customers: $e');
     }
   }
-
 
   Future<void> _loadTokenAndPrinter() async {
     final prefs = await SharedPreferences.getInstance();
@@ -115,14 +110,11 @@ class _CartScreenState extends State<CartScreen> {
       await prefs.setString('accessToken', newAccessToken);
 
       if (mounted) {
-        setState(() {
-          _accessToken = newAccessToken;
-        });
+        setState(() => _accessToken = newAccessToken);
       }
       return true;
     } else {
       await (await SharedPreferences.getInstance()).clear();
-
       if (mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           Navigator.pushReplacementNamed(context, '/login');
@@ -133,16 +125,16 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Future<http.Response> _makeApiCall(
-      String method,
-      String url, {
-        Map<String, dynamic>? payload,
-        int retryCount = 0,
-      }) async {
+    String method,
+    String url, {
+    Map<String, dynamic>? payload,
+    int retryCount = 0,
+  }) async {
     final uri = Uri.parse(url);
     final body = payload != null ? jsonEncode(payload) : null;
     http.Response response;
 
-    Map<String, String> headers = {
+    final headers = {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer $_accessToken',
     };
@@ -170,61 +162,44 @@ class _CartScreenState extends State<CartScreen> {
 
     if (response.statusCode == 401 && retryCount == 0) {
       final success = await _refreshTokenUtility();
-
       if (success && mounted) {
-        return _makeApiCall(
-          method,
-          url,
-          payload: payload,
-          retryCount: 1,
-        );
+        return _makeApiCall(method, url, payload: payload, retryCount: 1);
       }
     }
+
     return response;
   }
 
-  Future<void> _savePrinterAddress(String address) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('printerAddress', address);
-    setState(() => _savedPrinterAddress = address);
+  void _showMessage(String msg) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Printer saved successfully for future use.')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
-// In class _CartScreenState extends State<CartScreen> {
-// ...
 
   Future<void> _checkout(CartProvider cart) async {
     if (cart.items.isEmpty) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('The cart is empty.')),
-      );
+      _showMessage('The cart is empty.');
       return;
     }
 
     final double totalAmount = cart.totalAmount;
 
-    // --- 💥 FIX: Validation to prevent debt without a customer 💥 ---
+    // Prevent invalid debt
     if (_paidAmount < totalAmount && _selectedCustomerId == null) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot create debt. Please select a customer or pay the full amount.')),
+      _showMessage(
+        'Cannot create debt. Please select a customer or pay the full amount.',
       );
       return;
     }
-    // -----------------------------------------------------------------
 
     final Map<dynamic, dynamic> itemsToPrint = Map.from(cart.items);
-    final double totalAmountToPrint = totalAmount; // Use local variable
 
     final payload = {
       "shop": widget.shopId,
-      "user": 1, // TODO: replace with real user ID
+      "user": 1,
       "items": cart.checkoutItems,
       "payment_method": _paymentMethod,
       "paid_amount": _paidAmount,
-      // Only include customer_id if one is selected
       if (_selectedCustomerId != null) "customer_id": _selectedCustomerId,
     };
 
@@ -234,57 +209,110 @@ class _CartScreenState extends State<CartScreen> {
         '$_BASE_URL/orders/',
         payload: payload,
       );
-// ... rest of the function remains the same
 
       if (response.statusCode == 201 || response.statusCode == 200) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Order placed successfully!')),
-        );
-
+        _showMessage('Order placed successfully!');
         cart.clearCart();
-
-        _printPdfReceipt(itemsToPrint, totalAmountToPrint);
-        _printBluetoothReceipt(itemsToPrint, totalAmountToPrint);
-      } else if (response.statusCode != 401) {
+        _printPdfReceipt(itemsToPrint, totalAmount);
+        _printBluetoothReceipt(itemsToPrint, totalAmount);
+      } else {
         final error = jsonDecode(response.body);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Checkout failed: ${error.toString()}')),
-        );
+        _showMessage('Checkout failed: ${error.toString()}');
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Checkout failed: $e')),
-      );
+      _showMessage('Checkout failed: $e');
     }
   }
 
   void _printPdfReceipt(Map items, double totalAmount) async {
     final pdf = pw.Document();
 
+    final now = DateTime.now();
+    final customerName = _customers
+        .firstWhere(
+          (c) => c.id == _selectedCustomerId,
+          orElse: () => Customer(id: 0, name: 'Guest'),
+        )
+        .name;
+
+    final balance = _paidAmount - totalAmount;
+    final changeOrDebt = balance >= 0
+        ? 'Change: \$${balance.toStringAsFixed(2)}'
+        : 'Debt: \$${(balance.abs()).toStringAsFixed(2)}';
+
     pdf.addPage(
       pw.Page(
         build: (context) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            pw.Text('RECEIPT', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 12),
+            pw.Center(
+              child: pw.Text(
+                '🛍️ My Awesome Store',
+                style: pw.TextStyle(
+                  fontSize: 22,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+            ),
+            pw.Center(
+              child: pw.Text(
+                '123 Main Street, Springfield\nPhone: +1 555-555-5555',
+                textAlign: pw.TextAlign.center,
+                style: const pw.TextStyle(fontSize: 10),
+              ),
+            ),
+            pw.SizedBox(height: 10),
+            pw.Text('Date: ${now.toString().substring(0, 16)}'),
+            pw.Text('Customer: $customerName'),
+            pw.Text('Payment: $_paymentMethod'),
+            pw.Divider(),
+
             pw.Table.fromTextArray(
-              headers: ['Name', 'Color', 'Size', 'Qty', 'Total'],
+              headers: ['Item', 'Qty', 'Unit', 'Total'],
+              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              cellAlignment: pw.Alignment.centerLeft,
               data: items.values.map((item) {
-                final total = item.product.price * item.quantity;
+                final total = item.price * item.quantity;          // ✅
                 return [
                   item.product.name,
-                  item.colorName == "N/A" ? '-' : item.colorName,
-                  item.sizeName == "N/A" ? '-' : item.sizeName,
                   item.quantity.toString(),
-                  '\$${total.toStringAsFixed(2)}'
+                  '\$${item.price.toStringAsFixed(2)}',           // ✅
+                  '\$${total.toStringAsFixed(2)}',               // ✅
                 ];
               }).toList(),
             ),
+
             pw.Divider(),
-            pw.Text('Subtotal: \$${totalAmount.toStringAsFixed(2)}'),
-            pw.Text('TOTAL: \$${totalAmount.toStringAsFixed(2)}',
-                style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16)),
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text('Subtotal: \$${totalAmount.toStringAsFixed(2)}'),
+                  pw.Text('Paid: \$${_paidAmount.toStringAsFixed(2)}'),
+                  pw.Text(
+                    changeOrDebt,
+                    style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+            pw.Divider(),
+            pw.Center(
+              child: pw.Text(
+                'Thank you for shopping with us!',
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            pw.Center(
+              child: pw.Text(
+                'Visit again 💖',
+                style: const pw.TextStyle(fontSize: 10),
+              ),
+            ),
           ],
         ),
       ),
@@ -293,82 +321,82 @@ class _CartScreenState extends State<CartScreen> {
     await Printing.layoutPdf(onLayout: (format) => pdf.save());
   }
 
-  Future<List<int>> _generateBluetoothReceiptBytes(Map items, double totalAmount, pos_utils.PaperSize paper) async {
+  void _printBluetoothReceipt(
+    Map items,
+    double totalAmount, {
+    bool forceSelection = false,
+  }) async {
     final profile = await pos_utils.CapabilityProfile.load();
-    final generator = pos_utils.Generator(paper, profile);
+    final generator = pos_utils.Generator(pos_utils.PaperSize.mm80, profile);
     final now = DateTime.now();
-    List<int> bytes = [];
 
-    bytes += generator.text('My Awesome Store',
-        styles: const pos_utils.PosStyles(
-            align: pos_utils.PosAlign.center,
-            height: pos_utils.PosTextSize.size2,
-            width: pos_utils.PosTextSize.size2,
-            bold: true));
-    bytes += generator.text('123 Main St, Flutterland', styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.center));
+    List<int> bytes = [];
+    final customerName = _customers
+        .firstWhere(
+          (c) => c.id == _selectedCustomerId,
+          orElse: () => Customer(id: 0, name: 'Guest'),
+        )
+        .name;
+    final balance = _paidAmount - totalAmount;
+
+    bytes += generator.text(
+      'My Awesome Store',
+      styles: const pos_utils.PosStyles(
+        align: pos_utils.PosAlign.center,
+        bold: true,
+        height: pos_utils.PosTextSize.size2,
+        width: pos_utils.PosTextSize.size2,
+      ),
+    );
+    bytes += generator.text(
+      '123 Main Street\nPhone: +1 555-555-5555',
+      styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.center),
+    );
+    bytes += generator.hr();
+    bytes += generator.text('Date: ${now.toString().substring(0, 16)}');
+    bytes += generator.text('Customer: $customerName');
+    bytes += generator.text('Payment: $_paymentMethod');
     bytes += generator.hr();
 
-    bytes += generator.row([
-      pos_utils.PosColumn(text: 'Date:', width: 6),
-      pos_utils.PosColumn(text: now.toString().substring(0, 16), width: 6, styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.right)),
-    ]);
-    bytes += generator.text('SALES RECEIPT', styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.center, bold: true));
-    bytes += generator.emptyLines(1);
-
-    bytes += generator.row([
-      pos_utils.PosColumn(text: 'Item', width: 4, styles: const pos_utils.PosStyles(bold: true)),
-      pos_utils.PosColumn(text: 'Qty', width: 2, styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.center, bold: true)),
-      pos_utils.PosColumn(text: 'Total', width: 6, styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.right, bold: true)),
-    ]);
-    bytes += generator.hr(ch: '-');
-
+    // Print each item
     for (var item in items.values) {
-      final total = item.product.price * item.quantity;
-
+      final total = item.price * item.quantity;         // ✅
       bytes += generator.row([
-        pos_utils.PosColumn(text: item.product.name, width: 4),
-        pos_utils.PosColumn(text: item.quantity.toString(), width: 2, styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.center)),
-        pos_utils.PosColumn(text: total.toStringAsFixed(2), width: 6, styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.right)),
+        pos_utils.PosColumn(text: item.product.name, width: 6),
+        pos_utils.PosColumn(text: '${item.quantity}', width: 2),
+        pos_utils.PosColumn(
+          text: total.toStringAsFixed(2),
+          width: 4,
+          styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.right),
+        ),
       ]);
+    }
 
-      if (item.colorName != "N/A" || item.sizeName != "N/A") {
-        final colorDetail = item.colorName != "N/A" ? 'Color: ${item.colorName}' : '';
-        final sizeDetail = item.sizeName != "N/A" ? 'Size: ${item.sizeName}' : '';
-        final details = (colorDetail.isNotEmpty && sizeDetail.isNotEmpty)
-            ? '  ($colorDetail | $sizeDetail)'
-            : '  ($colorDetail$sizeDetail)';
-
-        bytes += generator.text(details, styles: const pos_utils.PosStyles(
-          fontType: pos_utils.PosFontType.fontB,
-          align: pos_utils.PosAlign.left,
-        ));
-      }
+    bytes += generator.hr();
+    bytes += generator.text('Subtotal: \$${totalAmount.toStringAsFixed(2)}');
+    bytes += generator.text('Paid: \$${_paidAmount.toStringAsFixed(2)}');
+    if (balance >= 0) {
+      bytes += generator.text('Change: \$${balance.toStringAsFixed(2)}');
+    } else {
+      bytes += generator.text('Debt: \$${(balance.abs()).toStringAsFixed(2)}');
     }
     bytes += generator.hr();
 
-    final subtotal = totalAmount;
-    final total = subtotal;
-
-    bytes += generator.row([
-      pos_utils.PosColumn(text: 'Subtotal:', width: 6, styles: const pos_utils.PosStyles(bold: true)),
-      pos_utils.PosColumn(text: '\$${subtotal.toStringAsFixed(2)}', width: 6, styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.right, bold: true)),
-    ]);
-    bytes += generator.row([
-      pos_utils.PosColumn(text: 'TOTAL:', width: 6, styles: const pos_utils.PosStyles(bold: true, height: pos_utils.PosTextSize.size2, width: pos_utils.PosTextSize.size2)),
-      pos_utils.PosColumn(text: '\$${total.toStringAsFixed(2)}', width: 6, styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.right, bold: true, height: pos_utils.PosTextSize.size2, width: pos_utils.PosTextSize.size2)),
-    ]);
-
-    bytes += generator.emptyLines(1);
-    bytes += generator.text('Thank you!', styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.center, bold: true));
+    bytes += generator.text(
+      'Thank you for shopping with us!',
+      styles: const pos_utils.PosStyles(
+        align: pos_utils.PosAlign.center,
+        bold: true,
+      ),
+    );
+    bytes += generator.text(
+      'Visit again 💖',
+      styles: const pos_utils.PosStyles(align: pos_utils.PosAlign.center),
+    );
     bytes += generator.cut();
 
-    return bytes;
-  }
-
-  void _printBluetoothReceipt(Map items, double totalAmount, {bool forceSelection = false}) async {
-    final receiptData = await _generateBluetoothReceiptBytes(items, totalAmount, pos_utils.PaperSize.mm80);
-    final Uint8List bytesToPrint = Uint8List.fromList(receiptData);
-
+    // Bluetooth print logic
+    final Uint8List bytesToPrint = Uint8List.fromList(bytes);
     String? targetAddress = _savedPrinterAddress;
 
     if (forceSelection || targetAddress == null) {
@@ -380,14 +408,24 @@ class _CartScreenState extends State<CartScreen> {
 
     if (targetAddress != null) {
       try {
-        await FlutterBluetoothPrinter.printBytes(data: bytesToPrint, address: targetAddress, keepConnected: false);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Printing initiated successfully!')));
+        await FlutterBluetoothPrinter.printBytes(
+          data: bytesToPrint,
+          address: targetAddress,
+          keepConnected: false,
+        );
+        _showMessage('Receipt printed successfully!');
       } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Printing failed. Please select printer again.')));
+        _showMessage('Printing failed. Reselect printer.');
         _printBluetoothReceipt(items, totalAmount, forceSelection: true);
       }
     }
+  }
+
+  Future<void> _savePrinterAddress(String address) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('printerAddress', address);
+    setState(() => _savedPrinterAddress = address);
+    _showMessage('Printer saved successfully.');
   }
 
   @override
@@ -395,11 +433,21 @@ class _CartScreenState extends State<CartScreen> {
     final cart = context.watch<CartProvider>();
     final total = cart.totalAmount;
 
-    if (isLoadingToken) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    // Only set default paid amount if it's 0 or cart changed to empty
+    if (_paidAmount == 0 && total > 0) {
+      _paidAmount = total;
+      _paidAmountController.text = total.toStringAsFixed(2);
+    } else if (total == 0) {
+      _paidAmount = 0;
+      _paidAmountController.text = '';
+    }
+    if (isLoadingToken) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return Scaffold(
       appBar: POSMenuBar(
-        totalAmount: cart.totalAmount,
+        totalAmount: total,
         userShopId: widget.shopId,
         token: _accessToken,
         role: widget.role,
@@ -413,119 +461,123 @@ class _CartScreenState extends State<CartScreen> {
               child: cart.items.isEmpty
                   ? const Center(child: Text("Your cart is empty"))
                   : ListView.builder(
-                itemCount: cart.items.length,
-                itemBuilder: (ctx, index) {
-                  final item = cart.items.entries.toList()[index].value;
+                      itemCount: cart.items.length,
+                      itemBuilder: (ctx, index) {
+                        final item = cart.items.entries.toList()[index].value;
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          child: ListTile(
+                            title: Text(
+                              item.product.name,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Qty: ${item.quantity} ${item.unitsPerPack > 1 ? "(Pack)" : "(Single)"} • \$${item.totalAmount.toStringAsFixed(2)}',
 
-                  return Card(
-                    margin: const EdgeInsets.symmetric(vertical: 6),
-                    child: ListTile(
-                      leading: SizedBox(
-                        width: 60,
-                        height: 60,
-                        child: Image.network(
-                          item.product.imageUrl,
-                          width: 60,
-                          height: 60,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                          const Center(child: Icon(Icons.shopping_bag, size: 40, color: Colors.blueGrey)),
-                        ),
-                      ),
-                      title: Text(item.product.name),
-                      subtitle: Text(
-                          'Color: ${item.colorName == "N/A" ? "-" : item.colorName} | Size: ${item.sizeName == "N/A" ? "-" : item.sizeName}'),
-                      trailing: SizedBox(
-                        width: 160,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.remove_circle, color: Colors.red),
-                              onPressed: () => cart.decrementItem(item),
                             ),
-                            Text(item.quantity.toString()),
-                            IconButton(
-                              icon: const Icon(Icons.add_circle, color: Colors.green),
-                              onPressed: () => cart.incrementItem(item),
+
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.remove_circle,
+                                    color: Colors.red,
+                                  ),
+                                  onPressed: () => cart.decrementItem(item),
+                                ),
+                                Text('${item.quantity}'),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.add_circle,
+                                    color: Colors.green,
+                                  ),
+                                  onPressed: () => cart.incrementItem(
+                                    item,
+                                    availableStock: item.product.variants
+                                        .firstWhere((v) => v.id == item.variantId.toString())
+                                        .stockQuantity,
+                                  ),
+
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.redAccent,
+                                  ),
+                                  onPressed: () => cart.removeItem(item),
+                                ),
+                              ],
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => cart.removeItem(item),
-                            ),
-                          ],
-                        ),
-                      ),
+                          ),
+                        );
+                      },
                     ),
-                  );
-                },
-              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Customer & Payment Section
+            DropdownButtonFormField<int>(
+              decoration: const InputDecoration(labelText: 'Select Customer'),
+              items: _customers
+                  .map(
+                    (c) => DropdownMenuItem(value: c.id, child: Text(c.name)),
+                  )
+                  .toList(),
+              value: _selectedCustomerId,
+              onChanged: (value) => setState(() => _selectedCustomerId = value),
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _paidAmountController,
+              decoration: const InputDecoration(labelText: 'Paid Amount'),
+              keyboardType: TextInputType.number,
+              onChanged: (value) {
+                // Only update if it's a valid number
+                final parsed = double.tryParse(value);
+                if (parsed != null) {
+                  _paidAmount = parsed;
+                }
+                // If invalid, don't change _paidAmount (keep previous value)
+              },
+            ),
+
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(labelText: 'Payment Method'),
+              value: _paymentMethod,
+              items: [
+                'CASH',
+                'CARD',
+              ].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+              onChanged: (value) =>
+                  setState(() => _paymentMethod = value ?? 'CASH'),
             ),
 
             const SizedBox(height: 16),
-
-            // NEW UI: Customer selection & Paid amount & Payment method
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                DropdownButtonFormField<int>(
-                  decoration: const InputDecoration(labelText: 'Select Customer'),
-                  items: _customers.map((c) => DropdownMenuItem(value: c.id, child: Text(c.name))).toList(),
-                  value: _selectedCustomerId,
-                  onChanged: (value) => setState(() => _selectedCustomerId = value),
-                ),
-                TextFormField(
-                  decoration: const InputDecoration(labelText: 'Paid Amount'),
-                  keyboardType: TextInputType.number,
-                  initialValue: total.toStringAsFixed(2),
-                  onChanged: (value) => _paidAmount = double.tryParse(value) ?? total,
-                ),
-                DropdownButtonFormField<String>(
-                  decoration: const InputDecoration(labelText: 'Payment Method'),
-                  value: _paymentMethod,
-                  items: ['CASH', 'CARD'].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-                  onChanged: (value) => setState(() => _paymentMethod = value ?? 'CASH'),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 16),
-
             Row(
-              mainAxisAlignment: MainAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Total : ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                const SizedBox(width: 16),
-                Text('\$${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.green)),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  const Text('Printer Status: ', style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text(_savedPrinterAddress == null ? 'None Selected' : 'Saved (${_savedPrinterAddress!.substring(0, 10)}...)'),
-                  const SizedBox(width: 8),
-                  ElevatedButton.icon(
-                    onPressed: () => _printBluetoothReceipt(cart.items, cart.totalAmount, forceSelection: true),
-                    icon: const Icon(Icons.settings_bluetooth),
-                    label: Text(_savedPrinterAddress == null ? 'Select Printer' : 'Change/Reselect'),
+                Text(
+                  'Total: \$${total.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
-                ],
-              ),
-            ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16)),
-                onPressed: () async {
-                  await _checkout(cart);
-                },
-                child: const Text('Checkout', style: TextStyle(fontSize: 18)),
-              ),
+                ),
+                ElevatedButton(
+                  onPressed: () async => await _checkout(cart),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 32,
+                      vertical: 14,
+                    ),
+                  ),
+                  child: const Text('Checkout', style: TextStyle(fontSize: 16)),
+                ),
+              ],
             ),
           ],
         ),
@@ -551,7 +603,9 @@ class POSMenuBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppBar(title: Text("Cart Total: \$$totalAmount"));
+    return AppBar(
+      title: Text("Cart Total: \$${totalAmount.toStringAsFixed(2)}"),
+    );
   }
 
   @override

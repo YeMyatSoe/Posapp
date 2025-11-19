@@ -20,42 +20,26 @@ class POSMenuBar extends StatelessWidget implements PreferredSizeWidget {
     required this.userRole,
     required this.userShopId,
     required this.token,
-    required String role, // Kept for constructor compatibility, but marked as unused
+    required String
+    role, // Kept for constructor compatibility, but marked as unused
   });
 
   void _navigate(BuildContext context, String label) async {
     // Determine the effective shop ID, falling back to null or 1 if necessary
-    final int effectiveShopId = userShopId ?? 1;
+    final int effectiveShopId = userShopId ?? 0;
 
     switch (label) {
-      case 'Sale':
-      // case 'Dashboard': // Dashboard often redirects to the main Sale screen for POS users
-      //   Navigator.pushReplacement(
-      //     context,
-      //     MaterialPageRoute(
-      //       builder: (_) => HomeScreen(
-      //         role: userRole,
-      //         shopId: effectiveShopId,
-      //         token: token,
-      //       ),
-      //     ),
-      //   );
-      //   break;
-
       case 'Cart':
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => CartScreen(
-              role: userRole,
-              shopId: effectiveShopId,
-            ),
+            builder: (_) => CartScreen(role: userRole, shopId: effectiveShopId),
           ),
         );
         break;
 
       case 'Dashboard':
-      // 🚨 FIX: Pass the actual userShopId instead of hardcoding '1'
+        // 🚨 FIX: Pass the actual userShopId instead of hardcoding '1'
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -65,26 +49,28 @@ class POSMenuBar extends StatelessWidget implements PreferredSizeWidget {
         break;
 
       case 'Logout':
-      // 🚨 FIX: Implement Logout logic to clear tokens and redirect
+        // 🚨 FIX: Implement Logout logic to clear tokens and redirect
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove('accessToken');
         await prefs.remove('refreshToken');
         await prefs.remove('shopId'); // Clear shop ID as well
 
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Successfully logged out."))
+          const SnackBar(content: Text("Successfully logged out.")),
         );
 
         // Navigate to LoginScreen and clear the navigation stack
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (context) => const LoginScreen()),
-              (Route<dynamic> route) => false,
+          (Route<dynamic> route) => false,
         );
         return; // Return immediately after handling logout
 
       default:
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$label pressed")));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("$label pressed")));
     }
   }
 
@@ -92,7 +78,6 @@ class POSMenuBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     final menuItems = [
       {'icon': Icons.home, 'label': 'Dashboard'},
-      {'icon': Icons.inventory, 'label': 'Sale'},
       {'icon': Icons.shopping_cart, 'label': 'Cart'},
       {'icon': Icons.report, 'label': 'Reports'},
       {'icon': Icons.logout, 'label': 'Logout'},
@@ -104,18 +89,29 @@ class POSMenuBar extends StatelessWidget implements PreferredSizeWidget {
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(50),
         child: Container(
+          width: double.infinity,
           color: Colors.blue[700],
           height: 50,
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(), // smooth scroll
             child: Row(
+              mainAxisAlignment: MainAxisAlignment.start,
               children: menuItems.map((item) {
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
                   child: TextButton.icon(
-                    style: TextButton.styleFrom(foregroundColor: Colors.white),
-                    onPressed: () => _navigate(context, item['label'] as String),
-                    icon: Icon(item['icon'] as IconData, size: 20, color: Colors.white),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                    ),
+                    onPressed: () =>
+                        _navigate(context, item['label'] as String),
+                    icon: Icon(
+                      item['icon'] as IconData,
+                      size: 18,
+                      color: Colors.white,
+                    ),
                     label: Text(item['label'] as String),
                   ),
                 );
@@ -147,15 +143,25 @@ class POSMenuBar extends StatelessWidget implements PreferredSizeWidget {
                     final totalItems = cart.totalItems;
                     return totalItems > 0
                         ? Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(10)),
-                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-                      child: Text(
-                        '$totalItems',
-                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                        textAlign: TextAlign.center,
-                      ),
-                    )
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            child: Text(
+                              '$totalItems',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          )
                         : const SizedBox.shrink();
                   },
                 ),

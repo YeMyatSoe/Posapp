@@ -1,9 +1,10 @@
 from rest_framework import serializers
+import json
 from django.contrib.auth import get_user_model
 from .models import (
     Shop, Content, Banner,
     Category, Brand, Color, Size, Supplier,
-    Product, WasteProduct, Order, OrderItem, ProductVariant
+    Product, WasteProduct, Order, OrderItem, ProductVariant, DebtToPay
 )
 import json  # <-- ADD THIS IMPORT
 from django.db import transaction
@@ -37,7 +38,19 @@ class UserSerializer(serializers.ModelSerializer):
             "shop", "shop_id"
         ]
 
-
+class UserSignupSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    email = serializers.EmailField()
+    password = serializers.CharField()
+    role = serializers.ChoiceField(choices=[
+        ("OWNER", "Owner"),
+        ("MANAGER", "Manager"),
+        ("FINANCE", "Finance"),
+        ("HR", "HR"),
+        ("CASHIER", "Cashier"),
+    ])
+    shop_name = serializers.CharField(required=False, allow_blank=True)
+    shop = serializers.IntegerField(required=False)
 # ==========================
 # Content & Banner
 # ==========================
@@ -114,183 +127,166 @@ class SupplierSerializer(serializers.ModelSerializer):
         return DebtToPay.objects.filter(supplier=obj).aggregate(
             total=Sum('remaining_amount')
         )['total'] or 0
+
+
+class DebtToPaySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DebtToPay
+        fields = "__all__"
+
     # ---------------- ProductVariant Serializer (Remains the same) ----------------
 class ProductVariantSerializer(serializers.ModelSerializer):
     color_name = serializers.CharField(source='color.name', read_only=True)
     size_name = serializers.CharField(source='size.name', read_only=True)
 
-    # Expose color and size IDs directly for easy mapping if API returns integers
-    color = serializers.PrimaryKeyRelatedField(read_only=True)
-    size = serializers.PrimaryKeyRelatedField(read_only=True)
-    barcode = serializers.CharField(required=False, allow_null=True) # Matches the model's null=True, blank=True
+    barcode = serializers.CharField(required=False, allow_null=True)
+
+    # Pack fields
+    is_pack = serializers.BooleanField(required=False)
+    units_per_pack = serializers.IntegerField(required=False)
+    linked_single_variant = serializers.PrimaryKeyRelatedField(
+        queryset=ProductVariant.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    single_sale_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2,
+        required=False, allow_null=True
+    )
+    pack_sale_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2,
+        required=False, allow_null=True
+    )
+
+    effective_price = serializers.ReadOnlyField()
 
     class Meta:
         model = ProductVariant
-        fields = ['id', 'color', 'color_name', 'size', 'size_name', 'stock_quantity', 'barcode', 'sale_price']
+        fields = [
+            "id", "color", "color_name", "size", "size_name",
+            "stock_quantity", "barcode",
+            "sale_price", "single_sale_price", "pack_sale_price",
+            "is_pack", "units_per_pack", "linked_single_variant",
+            "effective_price"
+        ]
 
 
-# ---------------- Product Serializer (FIXED) ----------------
-
+# ===========================
+# Product Serializer
+# ===========================
 class ProductSerializer(serializers.ModelSerializer):
-    # Read/Write setup for simple fields (unchanged)
-    shop = ShopSerializer(read_only=True)
-    shop_id = serializers.PrimaryKeyRelatedField(
-        queryset=Shop.objects.all(), source="shop", write_only=True
-    )
-    category = CategorySerializer(read_only=True)
-    brand = BrandSerializer(read_only=True)
-    supplier = SupplierSerializer(read_only=True)
+    # Dynamic total stock
+    stock_quantity = serializers.SerializerMethodField(read_only=True)
 
-    category_id = serializers.PrimaryKeyRelatedField(
-        queryset=Category.objects.all(), source="category", write_only=True
-    )
-    brand_id = serializers.PrimaryKeyRelatedField(
-        queryset=Brand.objects.all(), source="brand", write_only=True, allow_null=True, required=False
-    )
-    supplier_id = serializers.PrimaryKeyRelatedField(
-        queryset=Supplier.objects.all(), source="supplier", write_only=True, allow_null=True, required=False
-    )
+    # Keep slugs, write-only ids, variants, colors/sizes as before
+    shop = serializers.SlugRelatedField(read_only=True, slug_field="name")
+    category = serializers.SlugRelatedField(read_only=True, slug_field="name")
+    brand = serializers.SlugRelatedField(read_only=True, slug_field="name")
+    supplier = serializers.SlugRelatedField(read_only=True, slug_field="name")
+    shop_id = serializers.PrimaryKeyRelatedField(queryset=Shop.objects.all(), source="shop", write_only=True)
+    category_id = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all(), source="category", write_only=True)
+    brand_id = serializers.PrimaryKeyRelatedField(queryset=Brand.objects.all(), source="brand", allow_null=True, required=False, write_only=True)
+    supplier_id = serializers.PrimaryKeyRelatedField(queryset=Supplier.objects.all(), source="supplier", allow_null=True, required=False, write_only=True)
 
-    # M2M Fields (unchanged)
-    colors = ColorSerializer(many=True, read_only=True)
-    sizes = SizeSerializer(many=True, read_only=True)
-    color_ids = serializers.PrimaryKeyRelatedField(
-        queryset=Color.objects.all(), source="colors", write_only=True, many=True, required=False
-    )
-    size_ids = serializers.PrimaryKeyRelatedField(
-        queryset=Size.objects.all(), source="sizes", write_only=True, many=True, required=False
-    )
+    colors = serializers.SlugRelatedField(many=True, read_only=True, slug_field="name")
+    sizes = serializers.SlugRelatedField(many=True, read_only=True, slug_field="name")
+    color_ids = serializers.PrimaryKeyRelatedField(queryset=Color.objects.all(), source="colors", many=True, write_only=True, required=False)
+    size_ids = serializers.PrimaryKeyRelatedField(queryset=Size.objects.all(), source="sizes", many=True, write_only=True, required=False)
 
-    # Read-only nested variants for display (unchanged)
     variants = ProductVariantSerializer(many=True, read_only=True)
-
-    # ⭐️ CRITICAL FIX: Custom write-only field to receive JSON string from Flutter
     variants_json = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = Product
         fields = [
-            "id", "name", "stock_quantity", "purchase_price", "sale_price",
-            "category", "brand", "supplier", "colors", "sizes",
-            "category_id", "brand_id", "supplier_id", "color_ids", "size_ids",
-            "variants", "variants_json", # <-- Added variants_json
+            "id", "name", "stock_quantity",
+            "category", "brand", "supplier",
+            "colors", "sizes",
+            "category_id", "brand_id", "supplier_id",
+            "color_ids", "size_ids",
+            "variants", "variants_json",
             "image", "shop", "shop_id"
         ]
-        read_only_fields = ['stock_quantity'] # Stock is managed via variants
+        read_only_fields = ["stock_quantity"]
+
+    # Dynamic stock calculation
+    def get_min_purchase_price(self, obj):
+        prices = [v.purchase_price for v in obj.variants.all()]
+        return min(prices) if prices else None
+
+    def get_stock_quantity(self, obj):
+        return sum(v.stock_quantity for v in obj.variants.all())
 
 
-    # ---------------- Variant Management Logic ----------------
+    # ===========================================
+    # Helpers
+    # ===========================================
+    def _parse_variants(self, variants_raw):
+        try:
+            return json.loads(variants_raw or "[]")
+        except json.JSONDecodeError:
+            raise serializers.ValidationError("Invalid variants_json payload.")
 
-    def _manage_variants(self, product_instance, variants_data_list):
-        # 1. Get the current product's prices to use as a fallback default
-        default_sale_price = product_instance.sale_price
-        default_purchase_price = product_instance.purchase_price # <-- Get product's price
+    def _create_or_update_variant(self, product, v_data):
+        variant_id = v_data.pop("id", None)
 
-        existing_variants = {
-            (v.color_id if v.color else 0, v.size_id if v.size else 0): v
-            for v in product_instance.variants.all()
-        }
+        if variant_id:
+            ProductVariant.objects.filter(id=variant_id, product=product).update(**v_data)
+        else:
+            ProductVariant.objects.create(product=product, **v_data)
 
-        new_variant_keys = set()
-
-        for item in variants_data_list:
-            color_id = item.get('color_id')
-            size_id = item.get('size_id')
-            stock = item.get('stock_quantity', 0)
-            # CRITICAL: Extract prices from the variant data, or use product default
-            variant_sale_price = item.get('sale_price', default_sale_price)
-            variant_purchase_price = item.get('purchase_price', default_purchase_price) # <-- Use or default to product's price
-
-            # Map N/A (null) to 0 for key comparison
-            color_key = color_id if color_id else 0
-            size_key = size_id if size_id else 0
-            key = (color_key, size_key)
-            new_variant_keys.add(key)
-
-            defaults = {
-                'stock_quantity': stock,
-                'sale_price': variant_sale_price,
-                'purchase_price': variant_purchase_price, # <-- Added purchase_price
-            }
-
-            if key in existing_variants:
-                # Update existing variant
-                variant = existing_variants.pop(key)
-                for attr, value in defaults.items():
-                    setattr(variant, attr, value)
-                variant.save()
-            else:
-                # Create new variant
-                ProductVariant.objects.create(
-                    product=product_instance,
-                    color_id=color_id,
-                    size_id=size_id,
-                    **defaults
-                )
-
-        # Delete variants that were present but not included in the new data
-        for variant_key, variant_to_delete in existing_variants.items():
-            variant_to_delete.delete()
-
+    # ===========================================
+    # Create
+    # ===========================================
     @transaction.atomic
     def create(self, validated_data):
-        # 1. Extract and parse variants_json (will be present in both Add/Edit if variants exist)
-        variants_json_str = validated_data.pop('variants_json', '[]')
-        try:
-            variants_data_list = json.loads(variants_json_str)
-        except json.JSONDecodeError:
-            raise serializers.ValidationError({"variants_json": "Invalid JSON format."})
+        color_ids = validated_data.pop("colors", [])
+        size_ids = validated_data.pop("sizes", [])
+        variants_raw = validated_data.pop("variants_json", "")
 
-        # 2. Extract M2M fields (colors/sizes) which are defined with source='colors'/'sizes'
-        colors_m2m = validated_data.pop('colors', [])
-        sizes_m2m = validated_data.pop('sizes', [])
-
-        # 3. Create the Product instance
         product = Product.objects.create(**validated_data)
 
-        # 4. Set M2M relationships
-        product.colors.set(colors_m2m)
-        product.sizes.set(sizes_m2m)
+        if color_ids:
+            product.colors.set(color_ids)
+        if size_ids:
+            product.sizes.set(size_ids)
 
-        # 5. Manage Variants
-        self._manage_variants(product, variants_data_list)
+        variants = self._parse_variants(variants_raw)
+
+        for v_data in variants:
+            v_data.setdefault("purchase_price", product.purchase_price)
+            v_data.setdefault("sale_price", product.sale_price)
+            ProductVariant.objects.create(product=product, **v_data)
 
         return product
 
+    # ===========================================
+    # Update
+    # ===========================================
     @transaction.atomic
     def update(self, instance, validated_data):
-        # 1. Extract and parse variants_json
-        variants_json_str = validated_data.pop('variants_json', None)
-        variants_data_list = []
-        if variants_json_str is not None:
-            try:
-                variants_data_list = json.loads(variants_json_str)
-            except json.JSONDecodeError:
-                raise serializers.ValidationError({"variants_json": "Invalid JSON format."})
+        color_ids = validated_data.pop("colors", None)
+        size_ids = validated_data.pop("sizes", None)
+        variants_raw = validated_data.pop("variants_json", "")
 
-        # 2. Extract M2M fields
-        colors_m2m = validated_data.pop('colors', None)
-        sizes_m2m = validated_data.pop('sizes', None)
-
-        # 3. Update Product instance fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # 4. Set M2M relationships if data was provided
-        if colors_m2m is not None:
-            instance.colors.set(colors_m2m)
-        if sizes_m2m is not None:
-            instance.sizes.set(sizes_m2m)
+        if color_ids is not None:
+            instance.colors.set(color_ids)
+        if size_ids is not None:
+            instance.sizes.set(size_ids)
 
-        # 5. Manage Variants (only if variants_json was explicitly sent)
-        if variants_json_str is not None:
-            self._manage_variants(instance, variants_data_list)
+        variants = self._parse_variants(variants_raw)
+
+        for v_data in variants:
+            self._create_or_update_variant(instance, v_data)
 
         return instance
-# ==========================
-# WasteProduct
-# ==========================
+# ===========================
+# Waste Product Serializer
+# ===========================
 class WasteProductSerializer(serializers.ModelSerializer):
     shop = serializers.StringRelatedField(read_only=True)
     shop_id = serializers.PrimaryKeyRelatedField(
@@ -306,12 +302,10 @@ class WasteProductSerializer(serializers.ModelSerializer):
     color_name = serializers.CharField(read_only=True)
     size_name = serializers.CharField(read_only=True)
     unit_purchase_price = serializers.DecimalField(
-        source="variant.unit_purchase_price",
-        max_digits=12, decimal_places=2, read_only=True
+        source="variant.purchase_price", max_digits=12, decimal_places=2, read_only=True
     )
     total_loss_value = serializers.DecimalField(
-        source="waste_value",
-        max_digits=12, decimal_places=2, read_only=True
+        source="waste_value", max_digits=12, decimal_places=2, read_only=True
     )
 
     class Meta:
@@ -323,85 +317,108 @@ class WasteProductSerializer(serializers.ModelSerializer):
             "quantity", "reason", "recorded_at",
             "unit_purchase_price", "total_loss_value"
         ]
-    def get_unit_purchase_price(self, obj):
-        return float(f"{obj.variant.unit_purchase_price:.2f}") if obj.variant else 0.0
 
-    def get_waste_value(self, obj):
-        price = obj.variant.unit_purchase_price if obj.variant else 0.0
-        return float(f"{price * obj.quantity:.2f}")
 
+# ===========================
+# Low Stock Serializer
+# ===========================
+class LowStockVariantSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    color_name = serializers.CharField(source='color.name', read_only=True)
+    size_name = serializers.CharField(source='size.name', read_only=True)
+
+    class Meta:
+        model = ProductVariant
+        fields = ['id', 'product_name', 'color_name', 'size_name', 'stock_quantity']
+
+
+# ===========================
+# Order & OrderItem Serializers
+# ===========================
 class OrderItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='variant.product.name', read_only=True)
     color_name = serializers.CharField(required=False, allow_null=True)
     size_name = serializers.CharField(required=False, allow_null=True)
     variant = serializers.PrimaryKeyRelatedField(queryset=ProductVariant.objects.all())
+    units_per_pack = serializers.IntegerField(required=False, default=1)
 
     class Meta:
         model = OrderItem
-        fields = [
-            "variant", "product_name", "color_name", "size_name",
-            "quantity", "price"
-        ]
-        read_only_fields = ("product_name", "price")
+        fields = ["variant", "product_name", "color_name", "size_name", "quantity", "units_per_pack", "price"]
+        read_only_fields = ["product_name", "price"]
 
-    def create(self, validated_data):
-        variant = validated_data.get('variant')
-        quantity = validated_data.get('quantity', 1)
 
-        if variant.stock_quantity < quantity:
-            raise serializers.ValidationError(f"Not enough stock for {variant.product.name} ({variant.color.name if variant.color else 'N/A'} / {variant.size.name if variant.size else 'N/A'})")
-
-        # Reduce stock
-        variant.stock_quantity -= quantity
-        variant.save()
-
-        # Save color_name and size_name for historical record
-        validated_data['color_name'] = variant.color.name if variant.color else "N/A"
-        validated_data['size_name'] = variant.size.name if variant.size else "N/A"
-        validated_data['price'] = variant.sale_price * quantity
-
-        return super().create(validated_data)
-
+from decimal import Decimal
+from django.db import transaction
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True)
-    paid_amount = serializers.DecimalField(
-        max_digits=12, decimal_places=2, required=False, default=0
-    )
-    customer_id = serializers.IntegerField(required=False, allow_null=True)
+    customer_name = serializers.CharField(source='customer.name', read_only=True)  # <-- new field
 
     class Meta:
         model = Order
-        fields = ["id", "shop", "user", "total_price", "status", "created_at", "items",
-                  "paid_amount", "customer_id"]
-        read_only_fields = ("total_price", "status", "created_at")
+        fields = [
+            "id", "shop", "user", "total_price", "status",
+            "created_at", "items", "paid_amount", "customer_id", "customer_name"
+        ]
+        read_only_fields = ["total_price", "status", "created_at", "customer_name"]
 
+    @transaction.atomic
     def create(self, validated_data):
-        items_data = validated_data.pop('items')
-        paid_amount = validated_data.pop('paid_amount', Decimal('0.00'))
-        customer_id = validated_data.pop('customer_id', None)
-        user = validated_data.pop('user', None)
-
-        # Calculate total
-        total = sum([item['variant'].sale_price * item.get('quantity', 1) for item in items_data])
-        validated_data['total_price'] = total
-        validated_data['status'] = "COMPLETED"
+        items_data = validated_data.pop("items")
+        user = validated_data.pop("user", None)
+        customer_id = validated_data.pop("customer_id", None)
+        paid_amount = validated_data.get("paid_amount", Decimal("0"))
 
         order = Order.objects.create(user=user, **validated_data)
 
+        total_price = Decimal("0")
+
         for item_data in items_data:
+            variant = item_data["variant"]
+            qty = int(item_data["quantity"])
+
+            # Determine correct price
+            if qty == variant.units_per_pack and variant.is_pack:
+                price = Decimal(variant.pack_sale_price)
+            else:
+                price = Decimal(variant.single_sale_price)
+
+            # Reduce stock
+            variant.reduce_stock(qty)
+
             OrderItem.objects.create(
                 order=order,
-                variant=item_data['variant'],
-                quantity=item_data.get('quantity', 1),
-                color_name=item_data['variant'].color.name if item_data['variant'].color else "N/A",
-                size_name=item_data['variant'].size.name if item_data['variant'].size else "N/A",
-                price=item_data['variant'].sale_price * item_data.get('quantity', 1)
+                variant=variant,
+                quantity=qty,
+                units_per_pack=variant.units_per_pack if variant.is_pack else 1,
+                price=price,
+                color_name=variant.color.name if variant.color else None,
+                size_name=variant.size.name if variant.size else None,
             )
 
-        # Debt handling is still done in the view (OrderViewSet.perform_create)
+            # Add price * quantity only for single units; pack already counted as whole
+            if qty == variant.units_per_pack and variant.is_pack:
+                total_price += price
+            else:
+                total_price += price * qty
 
+        order.total_price = total_price
+
+        # Attach customer if provided
+        customer_id = self.initial_data.get("customer_id")
+        if customer_id:
+            try:
+                customer = Customer.objects.get(id=customer_id, shop=order.shop)
+                order.customer = customer
+            except Customer.DoesNotExist:
+                pass
+
+
+        order.save()
         return order
+
+
 
 from rest_framework import serializers
 from decimal import Decimal
@@ -516,7 +533,7 @@ class ShopReportSerializer(serializers.Serializer):
     # Detailed Data
     waste_details = WasteItemSerializer(many=True)
     pl_details = PLItemSerializer(many=True)
-
+    monthly_comparison = serializers.ListField()  # <-- ADD THIS
     # Note: Sales Summary is typically calculated from total_revenue
 
 #==============

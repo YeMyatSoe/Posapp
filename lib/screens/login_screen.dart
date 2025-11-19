@@ -67,11 +67,12 @@ class _LoginScreenState extends State<LoginScreen> {
         // 🎯 FIX: Changed the key from 'shopId' to 'userShopId'
         // to match the key used for loading in CategoryFormScreen.
         if (shopId != null) {
-          await prefs.setInt('userShopId', shopId);
-          debugPrint('DEBUG: Successfully saved userShopId: $shopId');
+          await prefs.setInt('shopId', shopId);
+          debugPrint('✅ Saved shopId: $shopId');
         } else {
-          debugPrint('DEBUG: User shop ID was null in login response.');
+          debugPrint('⚠️ User shop ID was null in login response.');
         }
+
 
         // Navigate to HomeScreen
         Navigator.pushReplacement(

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.core.exceptions import ValidationError
-from .models import User, Shop, Content, Banner, ProductVariant, Product
+from .models import OrderItem,Order, User, Shop, Content, Banner, ProductVariant, Product
 
 # ===========================
 # Super Admin Only Admin
@@ -152,10 +152,44 @@ class ShopAdmin(admin.ModelAdmin):
 # ===========================
 admin.site.register(Content, SuperAdminOnlyAdmin)
 admin.site.register(Banner, SuperAdminOnlyAdmin)
+# ✅ Register ProductVariant normally
+@admin.register(ProductVariant)
+class ProductVariantAdmin(admin.ModelAdmin):
+    search_fields = ["product__name", "color__name", "size__name", "barcode"]
+    list_display = ("product", "color", "size", "stock_quantity", "is_pack")
+
+
+# ✅ Create an Inline for variants under Product
 class ProductVariantInline(admin.TabularInline):
     model = ProductVariant
     extra = 1
+    fields = (
+        "color",
+        "size",
+        "barcode",
+        "stock_quantity",
+        "purchase_price",
+        "sale_price",
+        "single_sale_price",
+        "pack_sale_price",
+        "is_pack",
+        "units_per_pack",
+        "linked_single_variant",
+    )
+#     autocomplete_fields = ["linked_single_variant"]
+
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
+    list_display = ("name", "category", "brand", "total_stock", "is_active")
+    search_fields = ("name",)
+    list_filter = ("category", "brand", "is_active")
     inlines = [ProductVariantInline]
+
+    @admin.display(description="Stock")
+    def total_stock(self, obj):
+        # Sum stock from all variants
+        return sum(v.stock_quantity for v in obj.variants.all())
+
+admin.site.register(Order)
+admin.site.register(OrderItem)

@@ -3,6 +3,7 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from decimal import Decimal, ROUND_HALF_UP
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 class User(AbstractUser):
     class Roles(models.TextChoices):
         SUPER_ADMIN = "SUPER_ADMIN", "Super Admin"
@@ -56,7 +57,14 @@ class Shop(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     is_active = models.BooleanField(default=True)
-
+    expire_date = models.DateField(blank=True, null=True)
+    def save(self, *args, **kwargs):
+        # 👇 Set expire_date only if new shop and not manually set
+        if not self.id and not self.expire_date:
+            self.expire_date = date.today() + timedelta(days=30)
+        super().save(*args, **kwargs)
+    def is_expired(self):
+        return self.expire_date and self.expire_date < date.today()
     def __str__(self):
         return f"{self.name} ({'Active' if self.is_active else 'Inactive'})"
     def total_waste_loss(self):
@@ -198,60 +206,169 @@ class Supplier(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.shop.name})"
+class DebtToPay(models.Model):
+    shop = models.ForeignKey("Shop", on_delete=models.CASCADE)
+    supplier = models.ForeignKey("Supplier", on_delete=models.CASCADE)
+    product = models.ForeignKey("Product", on_delete=models.CASCADE)
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    paid_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    remaining_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    status = models.CharField(max_length=10, choices=[("UNPAID", "Unpaid"), ("PARTIAL", "Partial"), ("PAID", "Paid")])
+    note = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 # ===========================
 # Product
 # ===========================
+from django.db import models, transaction
+from django.core.validators import MinValueValidator
+from django.utils.timezone import now
+
 class Product(models.Model):
-    shop = models.ForeignKey("Shop", on_delete=models.CASCADE, related_name="products", blank=True, null=True)
+    shop = models.ForeignKey(
+        "Shop",
+        on_delete=models.CASCADE,
+        related_name="products",
+        blank=True,
+        null=True
+    )
     name = models.CharField(max_length=255)
-    category = models.ForeignKey(Category, on_delete=models.CASCADE)
-    brand = models.ForeignKey(Brand, on_delete=models.SET_NULL, null=True, blank=True)
+    category = models.ForeignKey("Category", on_delete=models.CASCADE)
+    brand = models.ForeignKey("Brand", on_delete=models.SET_NULL, null=True, blank=True)
     colors = models.ManyToManyField("Color", blank=True)
     sizes = models.ManyToManyField("Size", blank=True)
-    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True)
-
-    stock_quantity = models.PositiveIntegerField(default=0)
-    purchase_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
-    sale_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    purchase_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    sale_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    supplier = models.ForeignKey("Supplier", on_delete=models.SET_NULL, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     image = models.ImageField(upload_to="product_images/", null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["shop", "name"]),
+        ]
+
+    def __str__(self):
+        shop_name = getattr(self.shop, "name", None)
+        return f"{self.name} ({shop_name})" if shop_name else self.name
+
+    # Convenience aggregated properties (read-only) — do not save to DB
+    @property
+    def total_stock(self) -> int:
+        return self.variants.aggregate(total=models.Sum("stock_quantity"))["total"] or 0
+
+    @property
+    def min_sale_price(self) -> Decimal:
+        """Lowest effective_price among variants (useful for UI)."""
+        vals = [v.effective_price for v in self.variants.all()]
+        return min(vals) if vals else Decimal("0.00")
+
+class ProductVariant(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="variants")
+    color = models.ForeignKey("Color", on_delete=models.SET_NULL, null=True, blank=True)
+    size = models.ForeignKey("Size", on_delete=models.SET_NULL, null=True, blank=True)
+    barcode = models.CharField(max_length=50, null=True, blank=True)  # uniqueness handled by constraint below
+    stock_quantity = models.PositiveIntegerField(default=0)
+    purchase_price = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+    sale_price = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+
+    # Package fields
+    is_pack = models.BooleanField(default=False, help_text="True when this variant represents a pack.")
+    units_per_pack = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
+    linked_single_variant = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="linked_packs",
+        help_text="If this is a pack, the single-item variant it represents."
+    )
+
+    # Optional alternative price fields
+    single_sale_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    pack_sale_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-#     class Meta:
-#         unique_together = ("shop", "name")  # Product names unique within shop
-
-    def __str__(self):
-        return f"{self.name} ({self.shop.name})"
-
-class ProductVariant(models.Model):
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="variants")
-    color = models.ForeignKey(Color, on_delete=models.SET_NULL, null=True, blank=True)
-    size = models.ForeignKey(Size, on_delete=models.SET_NULL, null=True, blank=True)
-    barcode = models.CharField(
-        max_length=50,  # Adjust max_length based on your barcode standard (e.g., 13 for EAN-13)
-        unique=True,
-        null=True,      # Allow null values in the database
-        blank=True,     # Allow the field to be left empty in forms/admin
-        help_text="EAN, UPC, or custom product code"
-    )
-    stock_quantity = models.PositiveIntegerField(default=0)
-    purchase_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
-    sale_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
-
     class Meta:
-        unique_together = ("product", "color", "size")  # Each combination is unique
+        constraints = [
+            models.UniqueConstraint(fields=["product", "color", "size", "is_pack"], name="unique_variant_per_shape_pack"),
+            models.UniqueConstraint(fields=["product", "barcode"], name="unique_barcode_per_product"),
+        ]
+        indexes = [
+            models.Index(fields=["product", "barcode"]),
+        ]
 
-    def __str__(self):
-        name_parts = [self.product.name]
-        if self.color:
-            name_parts.append(str(self.color))
-        if self.size:
-            name_parts.append(str(self.size))
-        return " / ".join(name_parts)
+    def clean(self):
+        # Prevent linking to self
+        if self.linked_single_variant and self.linked_single_variant_id == self.id:
+            raise ValidationError("Variant cannot be linked to itself as the single variant.")
 
+        # If is_pack is True, units_per_pack must be > 1 (business decision)
+        if self.is_pack and self.units_per_pack < 1:
+            raise ValidationError("units_per_pack must be >= 1.")
+
+        # If pack has linked_single_variant, ensure linked variant belongs to same product and is not a pack
+        if self.linked_single_variant:
+            if self.linked_single_variant.product_id != self.product_id:
+                raise ValidationError("linked_single_variant must belong to the same product.")
+            if self.linked_single_variant.is_pack:
+                raise ValidationError("linked_single_variant must NOT be a pack variant.")
+
+    def save(self, *args, **kwargs):
+        # Some automatic normalization: set is_pack according to units_per_pack or explicit flag
+        if self.units_per_pack > 1:
+            self.is_pack = True
+        # Call clean before saving to ensure invariants
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    @property
+    def effective_price(self):
+        """Return the correct sale price depending on pack/single preference."""
+        if self.is_pack:
+            return self.pack_sale_price if self.pack_sale_price is not None else self.sale_price
+        return self.single_sale_price if self.single_sale_price is not None else self.sale_price
+
+    @transaction.atomic
+    def reduce_stock(self, quantity: int):
+        """
+        Reduce stock safely with select_for_update to avoid race conditions.
+        If this is a pack, also reduce linked_single_variant by units_per_pack * quantity.
+        """
+        if quantity <= 0:
+            raise ValueError("Quantity must be positive")
+
+        # Lock this row
+        locked_self = ProductVariant.objects.select_for_update().get(pk=self.pk)
+
+        if quantity > locked_self.stock_quantity:
+            raise ValueError(f"Not enough stock for variant {locked_self.pk}")
+
+        locked_self.stock_quantity -= quantity
+        locked_self.save(update_fields=["stock_quantity"])
+
+        # If pack, reduce the linked single variant accordingly (also locked)
+        if locked_self.is_pack and locked_self.linked_single_variant_id:
+            linked = ProductVariant.objects.select_for_update().get(pk=locked_self.linked_single_variant_id)
+            total_units = quantity * locked_self.units_per_pack
+            if total_units > linked.stock_quantity:
+                raise ValueError(f"Not enough single stock for linked variant {linked.pk}")
+            linked.stock_quantity -= total_units
+            linked.save(update_fields=["stock_quantity"])
+
+    @transaction.atomic
+    def increase_stock(self, quantity: int):
+        if quantity <= 0:
+            raise ValueError("Quantity must be positive")
+        locked_self = ProductVariant.objects.select_for_update().get(pk=self.pk)
+        locked_self.stock_quantity += quantity
+        locked_self.save(update_fields=["stock_quantity"])
 # ===========================
 # WasteProduct (lost/damaged)
 # ===========================
@@ -377,7 +494,7 @@ class Order(models.Model):
         ("COMPLETED", "Completed"),
         ("CANCELLED", "Cancelled"),
     ]
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="Completed")
 
     @property
     def debt_amount(self):
@@ -385,36 +502,27 @@ class Order(models.Model):
 
     def __str__(self):
         return f"Order #{self.id} - {self.shop.name}"
+
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, related_name='items', on_delete=models.CASCADE)
-    variant = models.ForeignKey(
-        'ProductVariant',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
-    )
-
-    quantity = models.PositiveIntegerField(default=1)
-    price = models.DecimalField(max_digits=10, decimal_places=2)
-
-    # Store names for historical record
+    variant = models.ForeignKey('ProductVariant', on_delete=models.SET_NULL, null=True, blank=True)
+    product_name = models.CharField(max_length=255, null=True, blank=True)  # ADD THIS
+    quantity = models.PositiveIntegerField(default=1)           # Number of items (packs or singles)
+    units_per_pack = models.PositiveIntegerField(default=1)     # 1 for single, >1 for pack
+    price = models.DecimalField(max_digits=10, decimal_places=2)  # per item (not total)
     color_name = models.CharField(max_length=100, null=True, blank=True)
     size_name = models.CharField(max_length=100, null=True, blank=True)
+
+    @property
+    def total_units(self):
+        return self.quantity * self.units_per_pack
 
     def save(self, *args, **kwargs):
         if self.variant:
             self.color_name = self.variant.color.name if self.variant.color else None
             self.size_name = self.variant.size.name if self.variant.size else None
-            self.price = self.variant.sale_price * self.quantity
         super().save(*args, **kwargs)
-    def process_order(order):
-        for item in order.items.all():
-            variant = item.variant
-            if variant.stock_quantity >= item.quantity:
-                variant.stock_quantity -= item.quantity
-                variant.save()
-            else:
-                raise ValueError(f"Not enough stock for {variant}")
+
 
 from django.db import models
 from django.core.validators import MinValueValidator

@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 // ADDED ICON IMPORT: font_awesome_flutter for more expressive icons
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-
 import '../../widgets/admin/sidebar.dart';
 import '../../widgets/chart_widget.dart';
+import '../home_screen.dart';
 import 'emoloyee.dart'; // Assuming this is used or required elsewhere in your project
-
+import 'package:fl_chart/fl_chart.dart';
 // ============================
 // 1. API Constants
 // ============================
@@ -24,23 +25,82 @@ class PLDetail {
   final int quantitySold;
   final double unitSalePrice;
   final double unitCogs;
-  final int wasteQty;
-  final double wasteLoss;
+  final int stockQuantity;
   final double revenue;
-  final double cogs;
-  final double profit;
+  final double avgMonthlySold;
+  final String variantName;
+  final int currentStock;
+  final int totalSoldLast2Months;
+  final int suggestedRestock;
 
-  PLDetail.fromJson(Map<String, dynamic> json)
-      : productName = json['product_name'] ?? 'N/A',
-        sku = json['sku'] != null ? int.tryParse(json['sku'].toString()) ?? 0 : 0,
-        quantitySold = json['quantity_sold'] != null ? int.tryParse(json['quantity_sold'].toString()) ?? 0 : 0,
-        unitSalePrice = json['unit_sale_price'] != null ? double.tryParse(json['unit_sale_price'].toString()) ?? 0.0 : 0.0,
-        unitCogs = json['unit_cogs'] != null ? double.tryParse(json['unit_cogs'].toString()) ?? 0.0 : 0.0,
-        wasteQty = json['waste_qty'] != null ? int.tryParse(json['waste_qty'].toString()) ?? 0 : 0,
-        wasteLoss = json['waste_loss'] != null ? double.tryParse(json['waste_loss'].toString()) ?? 0.0 : 0.0,
-        revenue = json['revenue'] != null ? double.tryParse(json['revenue'].toString()) ?? 0.0 : 0.0,
-        cogs = json['cogs'] != null ? double.tryParse(json['cogs'].toString()) ?? 0.0 : 0.0,
-        profit = json['profit'] != null ? double.tryParse(json['profit'].toString()) ?? 0.0 : 0.0;
+  PLDetail({
+    required this.productName,
+    required this.sku,
+    required this.quantitySold,
+    required this.unitSalePrice,
+    required this.unitCogs,
+    required this.stockQuantity,
+    required this.revenue,
+    required this.avgMonthlySold,
+    required this.variantName,
+    required this.currentStock,
+    required this.totalSoldLast2Months,
+    required this.suggestedRestock,
+  });
+
+  factory PLDetail.fromJson(Map<String, dynamic> json) => PLDetail(
+    productName: json['product_name'] ?? 'N/A',
+    sku: json['sku'] != null ? int.tryParse(json['sku'].toString()) ?? 0 : 0,
+    quantitySold: json['quantity_sold'] != null
+        ? int.tryParse(json['quantity_sold'].toString()) ?? 0
+        : 0,
+    unitSalePrice: json['unit_sale_price'] != null
+        ? double.tryParse(json['unit_sale_price'].toString()) ?? 0.0
+        : 0.0,
+    unitCogs: json['unit_cogs'] != null
+        ? double.tryParse(json['unit_cogs'].toString()) ?? 0.0
+        : 0.0,
+    stockQuantity: json['stock_quantity'] != null
+        ? int.tryParse(json['stock_quantity'].toString()) ?? 0
+        : 0,
+    revenue: json['revenue'] != null
+        ? double.tryParse(json['revenue'].toString()) ?? 0.0
+        : 0.0,
+    avgMonthlySold: json['avg_monthly_sold'] != null
+        ? (json['avg_monthly_sold'] is int
+              ? (json['avg_monthly_sold'] as int).toDouble()
+              : json['avg_monthly_sold'] as double)
+        : 0.0,
+    variantName: json['variant_name'] ?? 'N/A',
+    currentStock: json['current_stock'] != null
+        ? int.tryParse(json['current_stock'].toString()) ?? 0
+        : 0,
+    totalSoldLast2Months: json['total_sold_last_2_months'] != null
+        ? int.tryParse(json['total_sold_last_2_months'].toString()) ?? 0
+        : 0,
+    suggestedRestock: json['suggested_restock'] != null
+        ? (json['suggested_restock'] is int
+              ? json['suggested_restock'] as int
+              : (json['suggested_restock'] as double).round())
+        : 0,
+  );
+
+  PLDetail copyWith({int? suggestedRestock}) {
+    return PLDetail(
+      productName: productName,
+      sku: sku,
+      quantitySold: quantitySold,
+      unitSalePrice: unitSalePrice,
+      unitCogs: unitCogs,
+      stockQuantity: stockQuantity,
+      revenue: revenue,
+      avgMonthlySold: avgMonthlySold,
+      variantName: variantName,
+      currentStock: currentStock,
+      totalSoldLast2Months: totalSoldLast2Months,
+      suggestedRestock: suggestedRestock ?? this.suggestedRestock,
+    );
+  }
 }
 
 class WasteDetail {
@@ -54,16 +114,22 @@ class WasteDetail {
   final String reason;
 
   WasteDetail.fromJson(Map<String, dynamic> json)
-      : date = json['date'] ?? 'N/A',
-        productName = json['product_name'] ?? 'N/A',
-        sku = json['sku'] != null ? int.tryParse(json['sku'].toString()) ?? 0 : 0,
-        category = json['category'] ?? 'N/A',
-        quantity = json['quantity'] != null ? int.tryParse(json['quantity'].toString()) ?? 0 : 0,
-        unitPurchasePrice = json['unit_purchase_price'] != null ? double.tryParse(json['unit_purchase_price'].toString()) ?? 0.0 : 0.0,
-        lossValue = json['waste_value'] != null
-            ? double.tryParse(json['waste_value'].toString()) ?? 0.0
-            : (json['loss_value'] != null ? double.tryParse(json['loss_value'].toString()) ?? 0.0 : 0.0),
-        reason = json['reason'] ?? 'N/A';
+    : date = json['date'] ?? 'N/A',
+      productName = json['product_name'] ?? 'N/A',
+      sku = json['sku'] != null ? int.tryParse(json['sku'].toString()) ?? 0 : 0,
+      category = json['category'] ?? 'N/A',
+      quantity = json['quantity'] != null
+          ? int.tryParse(json['quantity'].toString()) ?? 0
+          : 0,
+      unitPurchasePrice = json['unit_purchase_price'] != null
+          ? double.tryParse(json['unit_purchase_price'].toString()) ?? 0.0
+          : 0.0,
+      lossValue = json['waste_value'] != null
+          ? double.tryParse(json['waste_value'].toString()) ?? 0.0
+          : (json['loss_value'] != null
+                ? double.tryParse(json['loss_value'].toString()) ?? 0.0
+                : 0.0),
+      reason = json['reason'] ?? 'N/A';
 }
 
 class ReportData {
@@ -76,18 +142,38 @@ class ReportData {
   final double netProfit;
   final List<WasteDetail> wasteDetails;
   final List<PLDetail> plDetails;
+  final List<Map<String, dynamic>> monthlyComparison;
 
   ReportData.fromJson(Map<String, dynamic> json)
-      : totalRevenue = json['total_revenue'] != null ? double.tryParse(json['total_revenue'].toString()) ?? 0.0 : 0.0,
-        totalCogs = json['total_cogs'] != null ? double.tryParse(json['total_cogs'].toString()) ?? 0.0 : 0.0,
-        totalWasteLoss = json['total_waste_loss'] != null ? double.tryParse(json['total_waste_loss'].toString()) ?? 0.0 : 0.0,
-        totalExpenses = json['total_expenses'] != null ? double.tryParse(json['total_expenses'].toString()) ?? 0.0 : 0.0,
-        totalAdjustments = json['total_adjustments'] != null ? double.tryParse(json['total_adjustments'].toString()) ?? 0.0 : 0.0,
-        grossProfit = json['gross_profit'] != null ? double.tryParse(json['gross_profit'].toString()) ?? 0.0 : 0.0,
-        netProfit = json['net_profit'] != null ? double.tryParse(json['net_profit'].toString()) ?? 0.0 : 0.0,
-        wasteDetails = (json['waste_details'] as List?)?.map((i) => WasteDetail.fromJson(i as Map<String, dynamic>)).toList() ?? [],
-        plDetails = (json['pl_details'] as List?)?.map((i) => PLDetail.fromJson(i as Map<String, dynamic>)).toList() ?? [];
+      : totalRevenue = _parseDouble(json['total_revenue']),
+        totalCogs = _parseDouble(json['total_cogs']),
+        totalWasteLoss = _parseDouble(json['total_waste_loss']),
+        totalExpenses = _parseDouble(json['total_expenses']),
+        totalAdjustments = _parseDouble(json['total_adjustments']),
+        grossProfit = _parseDouble(json['gross_profit']),
+        netProfit = _parseDouble(json['net_profit']),
+        wasteDetails = (json['waste_details'] as List?)
+            ?.map((i) => WasteDetail.fromJson(i as Map<String, dynamic>))
+            .toList() ??
+            [],
+        plDetails = (json['pl_details'] as List?)
+            ?.map((i) => PLDetail.fromJson(i as Map<String, dynamic>))
+            .toList() ??
+            [],
+        monthlyComparison = (json['monthly_comparison'] as List?)
+            ?.whereType<Map>() // filter non-maps
+            .map((i) => Map<String, dynamic>.from(i))
+            .toList() ??
+            [];
+
+  static double _parseDouble(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString()) ?? 0.0;
+  }
 }
+
+
 
 // ============================
 // 3. API Service (Updated for token retry logic)
@@ -106,7 +192,9 @@ Future<http.Response> _makeReportCall({
   String? customStartDate,
   String? customEndDate,
 }) async {
-  String url = '$_API_BASE_URL/reports/shop_report/?shop_id=$shopId&period=$period';
+  // Make sure /api is included
+  String url =
+      '$_API_BASE_URL/reports/shop_report/?shop_id=$shopId&period=$period';
 
   if (period == 'custom') {
     if (customStartDate != null && customEndDate != null) {
@@ -129,22 +217,27 @@ Future<http.Response> _makeReportCall({
 // ============================
 // 4. ReportsScreen Widget
 // ============================
+
 class ReportsScreen extends StatefulWidget {
   final int shopId;
-
   const ReportsScreen({super.key, required this.shopId});
 
   @override
   State<ReportsScreen> createState() => _ReportsScreenState();
 }
 
-class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProviderStateMixin {
+class _ReportsScreenState extends State<ReportsScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   String _accessToken = '';
-  String _refreshToken = ''; // Added to hold the refresh token
+  String _refreshToken = '';
 
   String _selectedPeriodKey = 'daily';
-  Map<String, double> _salesSummaries = {'daily': 0.0, 'monthly': 0.0, 'yearly': 0.0};
+  Map<String, double> _salesSummaries = {
+    'daily': 0.0,
+    'monthly': 0.0,
+    'yearly': 0.0,
+  };
   double _totalSalesAllTime = 1.0;
 
   ReportData? _currentReportData;
@@ -156,6 +249,11 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     'monthly': 'This Month',
     'yearly': 'This Year',
   };
+
+  // --- P&L Dropdown ---
+  String _selectedPLPeriod = 'Monthly';
+  DateTime? _customStartDate;
+  DateTime? _customEndDate;
 
   @override
   void initState() {
@@ -172,35 +270,27 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     super.dispose();
   }
 
-  // REUSABLE TOKEN REFRESH UTILITY (Added)
   Future<bool> _refreshTokenUtility() async {
     final response = await http.post(
       Uri.parse(_REFRESH_URL),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({'refresh': _refreshToken}),
     );
-
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final newAccessToken = data['access'] as String;
-
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('accessToken', newAccessToken);
-
-      if (mounted) {
-        setState(() {
-          _accessToken = newAccessToken; // Update local state for subsequent calls
-        });
-      }
+      if (mounted) setState(() => _accessToken = newAccessToken);
       return true;
     } else {
-      // Refresh failed (Refresh Token expired). Force re-login.
       await (await SharedPreferences.getInstance()).clear();
-
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/login');
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Session expired. Please log in again.")),
+          const SnackBar(
+            content: Text("Session expired. Please log in again."),
+          ),
         );
       }
       return false;
@@ -208,16 +298,13 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
   }
 
   void _handleTabChange() {
-    // Only fetch if the tab index actually changed (not just scrolling animation)
     if (!_tabController.indexIsChanging) {
       String newPeriod = _tabController.index == 0
           ? 'daily'
           : _tabController.index == 1
           ? 'monthly'
           : 'yearly';
-      if (newPeriod != _selectedPeriodKey) {
-        _fetchCurrentReport(newPeriod);
-      }
+      if (newPeriod != _selectedPeriodKey) _fetchCurrentReport(newPeriod);
     }
   }
 
@@ -225,12 +312,10 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     final prefs = await SharedPreferences.getInstance();
     _accessToken = prefs.getString('accessToken') ?? '';
     _refreshToken = prefs.getString('refreshToken') ?? '';
-
     if (_accessToken.isEmpty || _refreshToken.isEmpty) {
       if (mounted) Navigator.pushReplacementNamed(context, '/login');
       return;
     }
-
     await _fetchInitialData();
   }
 
@@ -239,7 +324,29 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     await _fetchCurrentReport(_selectedPeriodKey);
   }
 
-  // FETCH SALES SUMMARIES (Updated with Refresh Logic)
+  // Future<http.Response> _makeReportCall({
+  //   required String period,
+  //   required String accessToken,
+  //   required int shopId,
+  //   String? customStartDate,
+  //   String? customEndDate,
+  // }) async {
+  //   String url =
+  //       '$_API_BASE_URL/reports/shop_report/?shop_id=$shopId&period=$period';
+  //   if (period == 'custom' &&
+  //       customStartDate != null &&
+  //       customEndDate != null) {
+  //     url += '&start_date=$customStartDate&end_date=$customEndDate';
+  //   }
+  //   return http.get(
+  //     Uri.parse(url),
+  //     headers: {
+  //       'Content-Type': 'application/json',
+  //       'Authorization': 'Bearer $accessToken',
+  //     },
+  //   );
+  // }
+
   Future<void> _fetchSalesSummaries() async {
     final int shopId = widget.shopId;
 
@@ -249,44 +356,30 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         accessToken: _accessToken,
         shopId: shopId,
       );
-
-      // Check for 401 and attempt refresh
       if (response.statusCode == 401 && await _refreshTokenUtility()) {
-        // Retry call with new Access Token
         response = await _makeReportCall(
           period: period,
           accessToken: _accessToken,
           shopId: shopId,
         );
       }
-
-      if (response.statusCode == 200) {
+      if (response.statusCode == 200)
         return ReportData.fromJson(json.decode(response.body));
-      } else if (response.statusCode == 401) {
-        // Refresh failed or unauthorized after refresh (should be handled by utility)
-        throw Exception('Unauthorized access. Please relogin.');
-      } else {
-        throw Exception('${response.statusCode} - ${response.body}');
-      }
+      throw Exception('${response.statusCode} - ${response.body}');
     }
 
     try {
-      final dailyFuture = _fetchAndParse('daily');
-      final monthlyFuture = _fetchAndParse('monthly');
-      final yearlyFuture = _fetchAndParse('yearly');
-
-      final results = await Future.wait([dailyFuture, monthlyFuture, yearlyFuture]);
-      final dailyReport = results[0];
-      final monthlyReport = results[1];
-      final yearlyReport = results[2];
-
+      final results = await Future.wait([
+        _fetchAndParse('daily'),
+        _fetchAndParse('monthly'),
+        _fetchAndParse('yearly'),
+      ]);
       if (!mounted) return;
-
       setState(() {
         _salesSummaries = {
-          'daily': dailyReport.totalRevenue,
-          'monthly': monthlyReport.totalRevenue,
-          'yearly': yearlyReport.totalRevenue,
+          'daily': results[0].totalRevenue,
+          'monthly': results[1].totalRevenue,
+          'yearly': results[2].totalRevenue,
         };
         _totalSalesAllTime = _salesSummaries.values.reduce((a, b) => a + b);
         if (_totalSalesAllTime == 0) _totalSalesAllTime = 1.0;
@@ -300,28 +393,51 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     }
   }
 
-  // FETCH CURRENT REPORT (Updated with Refresh Logic)
-  Future<void> _fetchCurrentReport(String periodKey) async {
+  Future<void> _fetchCurrentReport(String periodKey, {
+    DateTime? customStart,
+    DateTime? customEnd,
+  }) async {
     setState(() {
       _isLoading = true;
       _errorMessage = '';
       _selectedPeriodKey = periodKey;
     });
 
+    // For 'custom', ensure start and end are provided
+    if (periodKey == 'custom' && (customStart == null || customEnd == null)) {
+      setState(() {
+        _errorMessage =
+        'Please select a valid start and end date for custom period.';
+        _isLoading = false;
+      });
+      return;
+    }
+
     try {
-      http.Response response = await _makeReportCall(
+      var response = await _makeReportCall(
         period: periodKey,
         accessToken: _accessToken,
         shopId: widget.shopId,
+        customStartDate: customStart != null
+            ? DateFormat('yyyy-MM-dd').format(customStart)
+            : null,
+        customEndDate: customEnd != null
+            ? DateFormat('yyyy-MM-dd').format(customEnd)
+            : null,
       );
 
-      // Check for 401 and attempt refresh
+      // Retry with refreshed token if unauthorized
       if (response.statusCode == 401 && await _refreshTokenUtility()) {
-        // Retry call with new Access Token
         response = await _makeReportCall(
           period: periodKey,
           accessToken: _accessToken,
           shopId: widget.shopId,
+          customStartDate: customStart != null
+              ? DateFormat('yyyy-MM-dd').format(customStart)
+              : null,
+          customEndDate: customEnd != null
+              ? DateFormat('yyyy-MM-dd').format(customEnd)
+              : null,
         );
       }
 
@@ -332,27 +448,71 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
           _currentReportData = data;
           _isLoading = false;
         });
-      } else if (response.statusCode == 401) {
-        // Handle case where refresh failed but utility didn't redirect (e.g., initial call was 401)
-        throw Exception('Unauthorized. Please relogin.');
-      }
-      else {
+      } else {
         throw Exception('${response.statusCode} - ${response.body}');
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _currentReportData = null;
-        _errorMessage = 'Failed to load report for $periodKey: $e';
-        _isLoading = false;
-      });
+
+      // Redirect to HomeScreen immediately on failure
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) =>
+        const HomeScreen(role: '', shopId: null, token: '',)),
+            (Route<dynamic> route) => false,
+      );
     }
   }
 
   double get _displayedValue => _salesSummaries[_selectedPeriodKey] ?? 0.0;
-  String get _displayedPeriodTitle => _periodMap[_selectedPeriodKey] ?? _selectedPeriodKey;
 
-  // Location: _ReportsScreenState.build(BuildContext context)
+  String get _displayedPeriodTitle =>
+      _periodMap[_selectedPeriodKey] ?? _selectedPeriodKey;
+
+  Future<DateTimeRange?> _pickCustomDateRange() async {
+    final now = DateTime.now();
+    return await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2022),
+      lastDate: now,
+      initialDateRange: DateTimeRange(
+        start: now.subtract(const Duration(days: 7)),
+        end: now,
+      ),
+    );
+  }
+
+  // Fetch best-selling products
+  Future<List<PLDetail>> fetchBestSellingProducts() async {
+    final response = await http.get(
+      Uri.parse('http://10.0.2.2:8000/api/orders/best-selling/'),
+      headers: {'Authorization': 'Bearer $_accessToken'},
+    );
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> jsonData = json.decode(response.body);
+      final List bestSelling = jsonData['best_selling'] ?? [];
+      return bestSelling.map((e) => PLDetail.fromJson(e)).toList();
+    } else {
+      throw Exception('Failed to fetch best-selling products');
+    }
+  }
+
+  // Fetch low-selling products
+  Future<List<PLDetail>> fetchLowSellingProducts() async {
+    final response = await http.get(
+      Uri.parse('http://10.0.2.2:8000/api/orders/best-selling/'),
+      headers: {'Authorization': 'Bearer $_accessToken'},
+    );
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> jsonData = json.decode(response.body);
+      final List lowSelling = jsonData['low_selling'] ?? [];
+      return lowSelling.map((e) => PLDetail.fromJson(e)).toList();
+    } else {
+      throw Exception('Failed to fetch low-selling products');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -362,161 +522,251 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
-            child: Text('Error: $_errorMessage\nCheck API URL, shop ID, and server.',
-                style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+            child: Text(
+              'Error: $_errorMessage',
+              style: const TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ),
       );
     }
 
-    // 1. Center the content on large screens
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          // 👇 SETTING A STRICTER, SMALLER MAX WIDTH (600px)
-          maxWidth: 600,
-        ),
-        // 2. The main Scaffold is contained within the constraint
-        child: Scaffold(
-          appBar: AppBar(
-            title: const Text("Business Reports"),
-            leading: Builder(
-              builder: (context) => IconButton(
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Business Reports အစီရင်ခံစာ"),
+        leading: Builder(
+          builder: (context) =>
+              IconButton(
                 icon: const Icon(Icons.menu_rounded),
                 onPressed: () => Scaffold.of(context).openDrawer(),
               ),
-            ),
-            // actions: [
-            //   IconButton(
-            //     icon: const Icon(Icons.settings_outlined),
-            //     onPressed: () {
-            //       // TODO: Implement settings/filter logic
-            //     },
-            //   ),
-            // ],
-            elevation: 0,
-            flexibleSpace: Container(
-              decoration: BoxDecoration(
-                // color: Theme.of(context).primaryColor,
-              ),
-            ),
-            bottom: TabBar(
-              controller: _tabController,
-              indicatorSize: TabBarIndicatorSize.tab,
-              indicator: UnderlineTabIndicator(
-                borderSide: BorderSide(width: 3.0, color: Theme.of(context).colorScheme.secondary),
-                insets: const EdgeInsets.symmetric(horizontal: 16.0),
-              ),
-              labelStyle: const TextStyle(fontWeight: FontWeight.bold),
-              unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal),
-              tabs: const [
-                Tab(icon: Icon(FontAwesomeIcons.chartLine, size: 20), text: "Sales"),
-                Tab(icon: Icon(FontAwesomeIcons.trashCan, size: 20), text: "Waste"),
-                Tab(icon: Icon(FontAwesomeIcons.handHoldingDollar, size: 20), text: "P&L"),
-              ],
-            ),
-          ),
-          drawer: const SideBar(selectedPage: 'Reports'),
-          body: _isLoading && _currentReportData == null
-              ? const Center(child: CircularProgressIndicator())
-              : TabBarView(
-            controller: _tabController,
-            children: [
-              _buildSalesTab(),
-              _buildWasteTab(),
-              _buildProfitLossTab(),
-            ],
-          ),
+        ),
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorSize: TabBarIndicatorSize.tab,
+          tabs: const [
+            Tab(icon: Icon(FontAwesomeIcons.chartLine), text: "Sales အ‌ရောင်း"),
+            Tab(icon: Icon(FontAwesomeIcons.trashCan),
+                text: "Waste အလေအလွှင့်"),
+            Tab(icon: Icon(FontAwesomeIcons.handHoldingDollar),
+                text: "P&L အမြတ်/အရှုံး"),
+          ],
         ),
       ),
-    );
-  }
-
-  // ====================
-  // Sales Tab
-  // ====================
-  Widget _buildSalesTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
+      drawer: const SideBar(selectedPage: 'Reports'),
+      body: _isLoading && _currentReportData == null
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+        controller: _tabController,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _buildBarColumn()),
-              const SizedBox(width: 16),
-              // Moved circle widget to the top for prominence
-              _buildCircle(_displayedValue, _displayedPeriodTitle, _selectedPeriodKey),
-            ],
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: _buildSalesTab(),
           ),
-          const SizedBox(height: 24),
-          _buildSalesRecordTable(_displayedPeriodTitle, _currentReportData?.plDetails ?? []),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: _buildWasteTab(),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: _buildProfitLossTab(),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildBarColumn() {
-    return Column(
-      children: _salesSummaries.keys.map((periodKey) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8), // Reduced bottom padding
-          child: _buildBarCard(
-              _periodMap[periodKey]!,
-              _salesSummaries[periodKey]!,
-              periodKey == 'daily' ? Colors.teal : (periodKey == 'monthly' ? Colors.indigo : Colors.deepPurple), // Changed colors
-              periodKey),
-        );
-      }).toList(),
+  // =========================
+  // SALES TAB
+  // =========================
+  Widget _buildSalesTab() {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // Your period selection buttons
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            alignment: WrapAlignment.center,
+            children: _periodMap.keys.map((periodKey) {
+              final bool isSelected = periodKey == _selectedPeriodKey;
+              final Color color = periodKey == 'daily'
+                  ? Colors.teal
+                  : periodKey == 'monthly'
+                  ? Colors.indigo
+                  : Colors.deepPurple;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                child: ElevatedButton.icon(
+                  icon: Icon(
+                    periodKey == 'daily'
+                        ? Icons.today
+                        : periodKey == 'monthly'
+                        ? Icons.calendar_month
+                        : Icons.bar_chart,
+                    size: 20,
+                  ),
+                  label: Text(
+                    _periodMap[periodKey]!,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    elevation: isSelected ? 4 : 0,
+                    backgroundColor: isSelected ? color : Colors.white,
+                    foregroundColor: isSelected ? Colors.white : color,
+                    side: BorderSide(color: color),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 22,
+                      vertical: 14,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () {
+                    if (!isSelected) _fetchCurrentReport(periodKey);
+                  },
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 24),
+
+          _buildCircle(
+            _displayedValue,
+            _displayedPeriodTitle,
+            _selectedPeriodKey,
+          ),
+          const SizedBox(height: 24),
+
+          // Best-selling products
+          FutureBuilder<List<PLDetail>>(
+            future: fetchBestSellingProducts(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              } else if (snapshot.hasError) {
+                return Center(child: Text("Error: ${snapshot.error}"));
+              } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                return const Center(child: Text("No best-selling products"));
+              }
+              return _buildPLTable(
+                snapshot.data!,
+                title: "အရောင်းရဆုံး ပစ္စည်းများ ",
+                descending: true, // highest sold first
+                limit: 5,
+              );
+            },
+          ),
+          const SizedBox(height: 24),
+
+          // Low-selling products
+          FutureBuilder<List<PLDetail>>(
+            future: fetchLowSellingProducts(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              } else if (snapshot.hasError) {
+                return Center(child: Text("Error: ${snapshot.error}"));
+              } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                return const Center(child: Text("No low-selling products"));
+              }
+              return _buildPLTable(
+                snapshot.data!,
+                title: "ရောင်းအားနည်း ပစ္စည်းများ",
+                descending: false, // lowest sold first
+                limit: 5,
+              );
+            },
+          ),
+
+          const SizedBox(height: 24),
+
+          // Sales record table
+          _buildSalesRecordTable(
+            _displayedPeriodTitle,
+            _currentReportData?.plDetails ?? [],
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildBarCard(String title, double value, Color color, String periodKey) {
-    bool isSelected = periodKey == _selectedPeriodKey;
+  Widget _buildPLTable(List<PLDetail> items, {
+    String title = "Products",
+    bool descending = true, // true = highest first, false = lowest first
+    int limit = 5,
+  }) {
+    if (items.isEmpty) {
+      return const Center(child: Text("No product sales data available."));
+    }
 
-    return GestureDetector(
-      onTap: () {
-        if (periodKey != _selectedPeriodKey) _fetchCurrentReport(periodKey);
-      },
-      child: AnimatedContainer( // Use AnimatedContainer for smooth transition
-        duration: const Duration(milliseconds: 300),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.1) : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected ? color : Colors.grey.shade300,
-            width: isSelected ? 2 : 1,
-          ),
-          boxShadow: isSelected
-              ? [BoxShadow(color: color.withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 4))]
-              : [BoxShadow(color: Colors.grey.shade200, blurRadius: 4, offset: const Offset(0, 2))],
-        ),
-        padding: const EdgeInsets.all(16),
+    // Sort according to descending flag
+    final sortedItems = List<PLDetail>.from(items)
+      ..sort(
+            (a, b) =>
+        descending
+            ? b.totalSoldLast2Months.compareTo(a.totalSoldLast2Months)
+            : a.totalSoldLast2Months.compareTo(b.totalSoldLast2Months),
+      );
+
+    // Take top N items
+    final topItems = sortedItems.take(limit).toList();
+
+    return Card(
+      elevation: 6,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(title, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16, color: color)),
-                Icon(
-                  periodKey == 'daily' ? Icons.today : (periodKey == 'monthly' ? Icons.calendar_month : Icons.calendar_today),
-                  color: color,
-                  size: 20,
-                ),
-              ],
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: Colors.blueGrey,
+              ),
             ),
-            const SizedBox(height: 10),
-            Text("\$${value.toStringAsFixed(2)}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            // Progress Bar
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: LinearProgressIndicator(
-                value: value / _totalSalesAllTime,
-                minHeight: 10,
-                backgroundColor: color.withOpacity(0.2),
-                valueColor: AlwaysStoppedAnimation<Color>(color),
+            const SizedBox(height: 12),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                headingRowColor: MaterialStateColor.resolveWith(
+                      (states) => Colors.orange.shade50,
+                ),
+                columns: const [
+                  DataColumn(label: Text("Variant")),
+                  DataColumn(label: Text("Total Sold (2 mo)")),
+                  DataColumn(label: Text("Avg Monthly Sold")),
+                  DataColumn(label: Text("Suggested Restock")),
+                  DataColumn(label: Text("Remaining Stock")),
+                ],
+                rows: topItems.map((item) {
+                  return DataRow(
+                    cells: [
+                      DataCell(Text(item.variantName ?? 'N/A')),
+                      DataCell(Text(item.totalSoldLast2Months.toString())),
+                      DataCell(Text(item.avgMonthlySold.toStringAsFixed(0))),
+                      DataCell(
+                        Text(
+                          item.suggestedRestock.toString(),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: item.suggestedRestock > 0
+                                ? Colors.orange.shade700
+                                : Colors.grey,
+                          ),
+                        ),
+                      ),
+                      DataCell(Text(item.currentStock.toString())),
+                    ],
+                  );
+                }).toList(),
               ),
             ),
           ],
@@ -525,22 +775,42 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     );
   }
 
-  Widget _buildCircle(double value, String title, String periodKey) {
-    final progress = _totalSalesAllTime > 1.0 ? value / _totalSalesAllTime : 0.0;
+  Widget _buildCircle(double value,
+      String title,
+      String periodKey, {
+        double? avgValue,
+      }) {
+    // Calculate progress for the circular bar
+    final progress = _totalSalesAllTime > 0 ? value / _totalSalesAllTime : 0.0;
 
-    Color color = periodKey == 'daily' ? Colors.teal : (periodKey == 'monthly' ? Colors.indigo : Colors.deepPurple);
+    // Calculate growth percentage vs average
+    double growthPercent = 0;
+    if (avgValue != null && avgValue > 0) {
+      growthPercent = ((value - avgValue) / avgValue) * 100;
+    }
+
+    // Color based on period
+    final Color color = periodKey == 'daily'
+        ? Colors.teal
+        : periodKey == 'monthly'
+        ? Colors.indigo
+        : Colors.deepPurple;
 
     return Container(
-      width: 150,
-      height: 150,
+      width: 180,
+      height: 180,
       decoration: BoxDecoration(
-        color: Colors.white,
         shape: BoxShape.circle,
+        gradient: LinearGradient(
+          colors: [color.withOpacity(0.3), color.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.2),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
+            color: color.withOpacity(0.25),
+            blurRadius: 12,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
@@ -549,11 +819,11 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
           alignment: Alignment.center,
           children: [
             SizedBox(
-              width: 130,
-              height: 130,
+              width: 150,
+              height: 150,
               child: CircularProgressIndicator(
-                value: progress,
-                strokeWidth: 10,
+                value: progress.clamp(0.0, 1.0),
+                strokeWidth: 12,
                 color: color,
                 backgroundColor: color.withOpacity(0.3),
               ),
@@ -561,10 +831,47 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(title.split(' ').last, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.grey.shade700)),
-                const SizedBox(height: 4),
-                Text("\$${value.toStringAsFixed(0)}",
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: color)),
+                Text(
+                  title
+                      .split(' ')
+                      .last,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  "\$${value.toStringAsFixed(0)}",
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    color: color,
+                  ),
+                ),
+                if (avgValue != null)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        growthPercent >= 0
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                        color: growthPercent >= 0 ? Colors.green : Colors.red,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        "${growthPercent.abs().toStringAsFixed(1)}%",
+                        style: TextStyle(
+                          color: growthPercent >= 0 ? Colors.green : Colors.red,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ],
@@ -575,36 +882,73 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
 
   Widget _buildSalesRecordTable(String title, List<PLDetail> items) {
     return Card(
-      elevation: 6, // Increased elevation
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), // More rounded corners
+      elevation: 6,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("$title Sales Records",
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.blueGrey)),
+            Text(
+              "$title အရောင်းပစ္စည်းများ",
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: Colors.blueGrey,
+              ),
+            ),
             const SizedBox(height: 16),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
-                columnSpacing: 20,
-                dataRowMinHeight: 40,
-                dataRowMaxHeight: 50,
-                headingRowColor: MaterialStateColor.resolveWith((states) => Colors.indigo.shade50), // Highlight header
+                headingRowColor: MaterialStateColor.resolveWith(
+                      (states) => Colors.indigo.shade50,
+                ),
                 columns: const [
-                  DataColumn(label: Text("Product", style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text("Qty Sold", style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text("Sale Price", style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text("Revenue", style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(
+                    label: Text(
+                      "Product",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  DataColumn(
+                    label: Text(
+                      "Qty Sold",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  DataColumn(
+                    label: Text(
+                      "Sale Price",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  DataColumn(
+                    label: Text(
+                      "Revenue",
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
                 ],
                 rows: items.map((item) {
-                  return DataRow(cells: [
-                    DataCell(Text(item.productName)),
-                    DataCell(Text(item.quantitySold.toString())),
-                    DataCell(Text("\$${item.unitSalePrice.toStringAsFixed(2)}")),
-                    DataCell(Text("\$${item.revenue.toStringAsFixed(2)}", style: const TextStyle(fontWeight: FontWeight.w500, color: Colors.green))),
-                  ]);
+                  return DataRow(
+                    cells: [
+                      DataCell(Text(item.productName)),
+                      DataCell(Text(item.quantitySold.toString())),
+                      DataCell(
+                        Text("\$${item.unitSalePrice.toStringAsFixed(2)}"),
+                      ),
+                      DataCell(
+                        Text(
+                          "\$${item.revenue.toStringAsFixed(2)}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w500,
+                            color: Colors.green,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
                 }).toList(),
               ),
             ),
@@ -614,12 +958,11 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     );
   }
 
-  // ====================
-  // Waste Tab
-  // ====================
+  // =========================
+  // WASTE TAB
+  // =========================
   Widget _buildWasteTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
       child: Column(
         children: [
           _buildWasteSummaryCard(),
@@ -632,34 +975,54 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
 
   Widget _buildWasteSummaryCard() {
     final totalWasteLoss = _currentReportData?.totalWasteLoss ?? 0.0;
-
     return Card(
       elevation: 6,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(
-            children: [
-              const Icon(FontAwesomeIcons.circleExclamation, color: Colors.red, size: 24),
-              const SizedBox(width: 10),
-              Text("${_displayedPeriodTitle} Waste Summary",
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.red)),
-            ],
-          ),
-          const Divider(height: 20),
-          Text("Total Loss Value (at COGS):", style: TextStyle(fontSize: 16, color: Colors.grey.shade600)),
-          const SizedBox(height: 8),
-          Text("\$${totalWasteLoss.toStringAsFixed(2)}",
-              style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.redAccent)),
-        ]),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  FontAwesomeIcons.circleExclamation,
+                  color: Colors.red,
+                  size: 24,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  "${_displayedPeriodTitle} လေလွှင့်စာရင်း",
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                    color: Colors.red,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 20),
+            Text(
+              "ဆုံးရှုံးတန်ဖိုး(at COGS):",
+              style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "\$${totalWasteLoss.toStringAsFixed(2)}",
+              style: const TextStyle(
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                color: Colors.redAccent,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildWasteTable() {
     final items = _currentReportData?.wasteDetails ?? [];
-
     return Card(
       elevation: 6,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -668,144 +1031,549 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: DataTable(
-            columnSpacing: 20,
-            dataRowMinHeight: 40,
-            dataRowMaxHeight: 50,
-            headingRowColor: MaterialStateColor.resolveWith((states) => Colors.red.shade50),
+            headingRowColor: MaterialStateColor.resolveWith(
+                  (states) => Colors.red.shade50,
+            ),
             columns: const [
-              DataColumn(label: Text('Date', style: TextStyle(fontWeight: FontWeight.bold))),
-              DataColumn(label: Text('Product', style: TextStyle(fontWeight: FontWeight.bold))),
-              DataColumn(label: Text('Category', style: TextStyle(fontWeight: FontWeight.bold))),
-              DataColumn(label: Text('Qty', style: TextStyle(fontWeight: FontWeight.bold))),
-              DataColumn(label: Text('Unit COGS', style: TextStyle(fontWeight: FontWeight.bold))),
-              DataColumn(label: Text('Loss Value', style: TextStyle(fontWeight: FontWeight.bold))),
-              DataColumn(label: Text('Reason', style: TextStyle(fontWeight: FontWeight.bold))),
+              DataColumn(
+                label: Text(
+                  'Date',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Product',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Category',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Qty',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'Unit COGS',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'တန်ဖိုး',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              DataColumn(
+                label: Text(
+                  'အကြောင်းအရင်း',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
             ],
-            rows: items.map((item) {
-              return DataRow(cells: [
-                DataCell(Text(item.date)),
-                DataCell(Text(item.productName)),
-                DataCell(Text(item.category)),
-                DataCell(Text(item.quantity.toString())),
-                DataCell(Text("\$${item.unitPurchasePrice.toStringAsFixed(2)}")),
-                DataCell(Text("\$${item.lossValue.toStringAsFixed(2)}", style: const TextStyle(color: Colors.red))),
-                DataCell(Text(item.reason)),
-              ]);
-            }).toList(),
+            rows: items
+                .map(
+                  (item) =>
+                  DataRow(
+                    cells: [
+                      DataCell(Text(item.date)),
+                      DataCell(Text(item.productName)),
+                      DataCell(Text(item.category)),
+                      DataCell(Text(item.quantity.toString())),
+                      DataCell(
+                        Text("\$${item.unitPurchasePrice.toStringAsFixed(2)}"),
+                      ),
+                      DataCell(
+                        Text(
+                          "\$${item.lossValue.toStringAsFixed(2)}",
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                      ),
+                      DataCell(Text(item.reason)),
+                    ],
+                  ),
+            )
+                .toList(),
           ),
         ),
       ),
     );
   }
 
-  // ====================
-  // Profit & Loss Tab
-  // ====================
+  // =========================
+  // P&L TAB
+  // =========================
   Widget _buildProfitLossTab() {
-    final report = _currentReportData;
-    final items = report?.plDetails ?? [];
+    if (_currentReportData == null) {
+      return Center(
+        child: _isLoading
+            ? const CircularProgressIndicator()
+            : const Text("No financial data available for this period."),
+      );
+    }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // SUMMARY CARD REFACTOR
-        Card(
-          elevation: 6,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(children: [
-              _buildSummaryTile(Icons.attach_money, "Total Revenue", report?.totalRevenue, Colors.green),
-              _buildSummaryTile(FontAwesomeIcons.minus, "Total COGS", report?.totalCogs, Colors.brown),
-              _buildSummaryTile(FontAwesomeIcons.trashCan, "Total Waste Loss", report?.totalWasteLoss, Colors.red),
-              _buildSummaryTile(FontAwesomeIcons.receipt, "Total Expenses", report?.totalExpenses, Colors.orange),
-              _buildSummaryTile(FontAwesomeIcons.sliders, "Total Adjustments", report?.totalAdjustments, Colors.blueGrey),
+    final data = _currentReportData!;
 
-              const Divider(height: 20, thickness: 2, color: Colors.black45),
+    double parseDouble(dynamic value) {
+      if (value == null) return 0.0;
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
 
-              Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("NET PROFIT",
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-                    Text("\$${report?.netProfit.toStringAsFixed(2) ?? '0.00'}",
-                        style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
-                            color: (report?.netProfit ?? 0) >= 0 ? Colors.green.shade700 : Colors.red.shade700)),
-                  ],
+    // --- Use backend totals ---
+    final revenue = parseDouble(data.totalRevenue);
+    final cogs = parseDouble(data.totalCogs);
+    final wasteLoss = parseDouble(data.totalWasteLoss);
+    final operatingExpenses = parseDouble(data.totalExpenses);
+    final otherAdjustments = parseDouble(data.totalAdjustments);
+
+    final grossProfit = parseDouble(data.grossProfit);
+    final netProfit = parseDouble(data.netProfit);
+    final operatingProfit = grossProfit - operatingExpenses;
+
+    final rows = [
+      {"label": "Revenue", "amount": revenue, "type": "income"},
+      {"label": "COGS", "amount": cogs, "type": "expense"},
+      {"label": "Waste", "amount": wasteLoss, "type": "expense"},
+      {"label": "Gross Profit", "amount": grossProfit, "type": "profit"},
+      {
+        "label": "Operating Expenses",
+        "amount": operatingExpenses,
+        "type": "expense"
+      },
+      {
+        "label": "Operating Profit",
+        "amount": operatingProfit,
+        "type": "profit"
+      },
+      {
+        "label": "Other Adjustments",
+        "amount": otherAdjustments,
+        "type": "adjustment"
+      },
+      {"label": "Net Profit", "amount": netProfit, "type": "profit"},
+    ];
+
+    // --- Main Profit/Loss Chart ---
+    final mainBarGroups = <BarChartGroupData>[
+      BarChartGroupData(
+        x: 0,
+        barRods: [
+          BarChartRodData(
+            toY: revenue,
+            gradient: LinearGradient(
+                colors: [Colors.blue.shade600, Colors.blue.shade300]),
+            width: 22,
+            borderRadius: BorderRadius.circular(6),
+            backDrawRodData: BackgroundBarChartRodData(show: true, toY: 0),
+          ),
+        ],
+      ),
+      BarChartGroupData(
+        x: 1,
+        barRods: [
+          BarChartRodData(
+            toY: cogs,
+            gradient: LinearGradient(
+                colors: [Colors.orange.shade600, Colors.orange.shade300]),
+            width: 22,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          BarChartRodData(
+            toY: wasteLoss,
+            gradient: LinearGradient(
+                colors: [Colors.red.shade400, Colors.red.shade200]),
+            width: 22,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          BarChartRodData(
+            toY: grossProfit >= 0 ? grossProfit : 0,
+            gradient: LinearGradient(
+                colors: [Colors.green.shade600, Colors.green.shade300]),
+            width: 22,
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ],
+      ),
+      BarChartGroupData(
+        x: 2,
+        barRods: [
+          BarChartRodData(
+            toY: operatingExpenses,
+            gradient: LinearGradient(
+                colors: [Colors.red.shade300, Colors.red.shade100]),
+            width: 22,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          BarChartRodData(
+            toY: operatingProfit >= 0 ? operatingProfit : 0,
+            gradient: LinearGradient(
+                colors: [Colors.green.shade700, Colors.green.shade400]),
+            width: 22,
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ],
+      ),
+      BarChartGroupData(
+        x: 3,
+        barRods: [
+          BarChartRodData(
+            toY: otherAdjustments,
+            gradient: LinearGradient(
+                colors: [Colors.purple.shade400, Colors.purple.shade200]),
+            width: 22,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          BarChartRodData(
+            toY: netProfit >= 0 ? netProfit : 0,
+            gradient: LinearGradient(
+                colors: [Colors.green.shade900, Colors.green.shade600]),
+            width: 22,
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ],
+      ),
+    ];
+
+    // --- Monthly Comparison Chart ---
+    final monthly = (data.monthlyComparison ?? []) as List<dynamic>;
+    Widget monthlyChartWidget;
+    if (monthly.isNotEmpty) {
+      final normalized = monthly.map<Map<String, dynamic>>((e) {
+        if (e is Map<String, dynamic>) {
+          return {
+            'month': e['month_name'] ?? e['month'] ?? 'Unknown',
+            'revenue': parseDouble(e['revenue']),
+            'gross_profit': parseDouble(e['gross_profit']),
+            'net_profit': parseDouble(e['net_profit']),
+          };
+        }
+        return {};
+      }).toList();
+
+      final months = normalized.map((e) => e['month'] as String).toList();
+      final revenueList = normalized
+          .map((e) => e['revenue'] as double)
+          .toList();
+      final grossList = normalized
+          .map((e) => e['gross_profit'] as double)
+          .toList();
+      final netList = normalized.map((e) => e['net_profit'] as double).toList();
+
+      final monthlyBarGroups = <BarChartGroupData>[];
+      for (var i = 0; i < months.length; i++) {
+        monthlyBarGroups.add(
+          BarChartGroupData(
+            x: i,
+            barsSpace: 4,
+            barRods: [
+              BarChartRodData(
+                toY: revenueList[i],
+                gradient: LinearGradient(
+                    colors: [Colors.blue.shade400, Colors.blue.shade200]),
+                width: 12,
+              ),
+              BarChartRodData(
+                toY: grossList[i],
+                gradient: LinearGradient(
+                    colors: [Colors.green.shade400, Colors.green.shade200]),
+                width: 12,
+              ),
+              BarChartRodData(
+                toY: netList[i],
+                gradient: LinearGradient(
+                    colors: [Colors.purple.shade400, Colors.purple.shade200]),
+                width: 12,
+              ),
+            ],
+          ),
+        );
+      }
+
+      monthlyChartWidget = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 20),
+          const Text(
+            "📅 Monthly Comparison",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 320,
+            child: Card(
+              elevation: 3,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: BarChart(
+                  BarChartData(
+                    barGroups: monthlyBarGroups,
+                    groupsSpace: 20,
+                    gridData: FlGridData(show: false),
+                    borderData: FlBorderData(show: false),
+                    titlesData: FlTitlesData(
+                      leftTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                            showTitles: true, reservedSize: 50),
+                      ),
+                      bottomTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          getTitlesWidget: (value, meta) {
+                            final idx = value.toInt();
+                            if (idx < 0 || idx >= months.length)
+                              return const SizedBox.shrink();
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 6.0),
+                              child: Text(months[idx],
+                                  style: const TextStyle(fontSize: 12)),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ]),
+            ),
           ),
-        ),
-        const SizedBox(height: 24),
-        Text("${_displayedPeriodTitle} Detailed P&L (Product Level)",
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.blueGrey)),
-        const SizedBox(height: 12),
-        // DETAILED P&L TABLE REFACTOR
-        Card(
-          elevation: 6,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columnSpacing: 20,
-              dataRowMinHeight: 40,
-              dataRowMaxHeight: 50,
-              headingRowColor: MaterialStateColor.resolveWith((states) => Colors.grey.shade100),
-              columns: const [
-                DataColumn(label: Text('Product', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Sold Qty', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Revenue', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('COGS', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Waste Qty', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Waste Loss', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Profit', style: TextStyle(fontWeight: FontWeight.bold))),
-              ],
-              rows: items.map((item) {
-                double revenue = item.unitSalePrice * item.quantitySold;
-                double totalCogs = item.unitCogs * item.quantitySold;
-                double soldProfit = revenue - totalCogs - item.wasteLoss;
+          const SizedBox(height: 12),
+          Row(
+            children: const [
+              _LegendBox(color: Colors.blue, label: "Revenue"),
+              SizedBox(width: 12),
+              _LegendBox(color: Colors.green, label: "Gross Profit"),
+              SizedBox(width: 12),
+              _LegendBox(color: Colors.purple, label: "Net Profit"),
+            ],
+          ),
+        ],
+      );
+    } else {
+      monthlyChartWidget = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          SizedBox(height: 20),
+          Text(
+            "📅 Monthly Comparison",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+          SizedBox(height: 8),
+          Text("No monthly data available."),
+        ],
+      );
+    }
 
-                return DataRow(cells: [
-                  DataCell(Text(item.productName)),
-                  DataCell(Text(item.quantitySold.toString())),
-                  DataCell(Text("\$${revenue.toStringAsFixed(2)}", style: const TextStyle(color: Colors.green))),
-                  DataCell(Text("\$${totalCogs.toStringAsFixed(2)}", style: const TextStyle(color: Colors.brown))),
-                  DataCell(Text(item.wasteQty.toString())),
-                  DataCell(Text("\$${item.wasteLoss.toStringAsFixed(2)}", style: const TextStyle(color: Colors.red))),
-                  DataCell(Text("\$${soldProfit.toStringAsFixed(2)}",
-                      style: TextStyle(fontWeight: FontWeight.bold, color: soldProfit >= 0 ? Colors.green.shade700 : Colors.red.shade700))),
-                ]);
+    // --- Main UI ---
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // --- Period Selector ---
+          Row(
+            children: [
+              const Text("Select Period:",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(width: 16),
+              ToggleButtons(
+                borderRadius: BorderRadius.circular(8),
+                isSelected: ["Daily", "Monthly", "Yearly", "Custom"].map((
+                    p) => _selectedPLPeriod == p).toList(),
+                onPressed: (idx) async {
+                  final p = ["Daily", "Monthly", "Yearly", "Custom"][idx];
+                  if (p == "Custom") {
+                    final picked = await _pickCustomDateRange();
+                    if (picked != null) {
+                      setState(() {
+                        _selectedPLPeriod = p;
+                        _customStartDate = picked.start;
+                        _customEndDate = picked.end;
+                      });
+                      await _fetchCurrentReport(
+                        'custom',
+                        customStart: _customStartDate,
+                        customEnd: _customEndDate,
+                      );
+                    }
+                  } else {
+                    setState(() {
+                      _selectedPLPeriod = p;
+                      _customStartDate = null;
+                      _customEndDate = null;
+                    });
+                    await _fetchCurrentReport(p.toLowerCase());
+                  }
+                },
+                children: ["Daily", "Monthly", "Yearly", "Custom"].map((p) =>
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      child: Text(p),
+                    )).toList(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          // --- Main Profit/Loss Chart ---
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: 520,
+              height: 270,
+              child: Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: BarChart(
+                    BarChartData(
+                      barGroups: mainBarGroups,
+                      gridData: FlGridData(show: false),
+                      borderData: FlBorderData(show: false),
+                      titlesData: FlTitlesData(
+                        leftTitles: AxisTitles(sideTitles: SideTitles(
+                            showTitles: true, reservedSize: 50)),
+                        bottomTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            getTitlesWidget: (value, meta) {
+                              final labels = [
+                                "Revenue",
+                                "Gross",
+                                "Operating",
+                                "Net"
+                              ];
+                              int index = value.toInt();
+                              if (index < 0 || index >= labels.length)
+                                return const SizedBox.shrink();
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 8.0),
+                                child: Text(labels[index],
+                                    style: const TextStyle(fontSize: 12,
+                                        fontWeight: FontWeight.w500)),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // --- Summary Boxes ---
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: rows.map((row) {
+                final label = row['label'] as String;
+                final amount = row['amount'] as double;
+                final type = row['type'] as String;
+
+                Color amountColor;
+                if (type == 'profit') {
+                  amountColor =
+                  amount < 0 ? Colors.red.shade700 : Colors.green.shade700;
+                } else if (type == 'expense') {
+                  amountColor = Colors.red.shade600;
+                } else {
+                  amountColor = Colors.black87;
+                }
+
+                return Container(
+                  width: 180,
+                  margin: const EdgeInsets.only(right: 14),
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 12, horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05),
+                        blurRadius: 6,
+                        offset: const Offset(0, 3))
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label, style: TextStyle(fontWeight: type == 'profit'
+                          ? FontWeight.bold
+                          : FontWeight.w600,
+                          fontSize: 14,
+                          color: Colors.grey.shade800)),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Text("\$${amount.toStringAsFixed(2)}",
+                              style: TextStyle(color: amountColor,
+                                  fontWeight: type == 'profit'
+                                      ? FontWeight.bold
+                                      : FontWeight.w600,
+                                  fontSize: 16)),
+                          const SizedBox(width: 6),
+                          Icon(amount >= 0 ? Icons.trending_up : Icons
+                              .trending_down,
+                              color: amount >= 0 ? Colors.green : Colors.red,
+                              size: 18),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        height: 3,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(2),
+                          gradient: LinearGradient(colors: [
+                            amountColor.withOpacity(0.5),
+                            amountColor.withOpacity(0.1)
+                          ]),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
               }).toList(),
             ),
           ),
-        ),
-      ]),
-    );
-  }
 
-  // Helper Widget for P&L Summary
-  Widget _buildSummaryTile(IconData icon, String title, double? value, Color color) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Icon(icon, color: color, size: 20),
-              const SizedBox(width: 10),
-              Text(title, style: TextStyle(fontSize: 16, color: Colors.grey.shade800)),
-            ],
-          ),
-          Text("\$${value?.toStringAsFixed(2) ?? '0.00'}",
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: color)),
+          // --- Monthly Comparison ---
+          monthlyChartWidget,
         ],
       ),
     );
   }
 }
+// --- Small Legend Helper Widget ---
+  class _LegendBox extends StatelessWidget {
+  final Color color;
+  final String label;
+  const _LegendBox({required this.color, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+  return Row(
+  children: [
+  Container(width: 14, height: 14, color: color),
+  const SizedBox(width: 6),
+  Text(label, style: const TextStyle(fontSize: 12)),
+  ],
+  );
+  }
+  }

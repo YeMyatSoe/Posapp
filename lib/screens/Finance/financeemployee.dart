@@ -18,41 +18,46 @@ typedef RefreshTokenUtility = Future<bool> Function();
 /// Finance Main Screen with Module Tabs
 /// ====================================
 class FinanceScreen extends StatefulWidget {
-  const FinanceScreen({super.key});
+  final int? selectedShopId; // nullable now
+
+  const FinanceScreen({super.key, this.selectedShopId});
 
   @override
   State<FinanceScreen> createState() => _FinanceScreenState();
 }
 
 class _FinanceScreenState extends State<FinanceScreen> {
-  String _accessToken = ''; // CRITICAL: Renamed 'token' to '_accessToken' internally
-  String _refreshToken = ''; // CRITICAL: Added state for refresh token
+  String _accessToken = '';
+  String _refreshToken = '';
   bool _tokenLoaded = false;
-  String selectedCategory = 'Payroll Analytics'; final int selectedShopId = 1;
+  String selectedCategory = 'Payroll Analytics';
+  int? _userShopId;
+
   final List<String> categories = [
     'Expense Management',
     'Adjustment Management',
     'Revenue Reports',
     'Payroll Analytics',
     'Profit & Loss',
-
   ];
+
+  final String _REFRESH_URL = 'http://10.0.2.2:8000/api/token/refresh/';
 
   @override
   void initState() {
     super.initState();
-    _loadTokens(); // CRITICAL: Changed to load both tokens
+    _userShopId = widget.selectedShopId ?? 1; // fallback to safe default
+    _loadTokens();
   }
 
-  // CRITICAL FIX: Load both access and refresh tokens
+  // Load both access & refresh tokens from SharedPreferences
   Future<void> _loadTokens() async {
     final prefs = await SharedPreferences.getInstance();
     _accessToken = prefs.getString('accessToken') ?? '';
-    _refreshToken = prefs.getString('refreshToken') ?? ''; // Load refresh token
+    _refreshToken = prefs.getString('refreshToken') ?? '';
 
     if (_accessToken.isEmpty || _refreshToken.isEmpty) {
       if (mounted) {
-        // Clear tokens and force re-login if either is missing
         await prefs.clear();
         Navigator.pushReplacementNamed(context, '/login');
       }
@@ -63,7 +68,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
     }
   }
 
-  // CRITICAL FIX: Reusable token refresh utility
+  // Reusable token refresh utility
   Future<bool> _refreshTokenUtility() async {
     if (_refreshToken.isEmpty) return false;
 
@@ -75,38 +80,28 @@ class _FinanceScreenState extends State<FinanceScreen> {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      final newAccessToken = data['access'] as String;
+      _accessToken = data['access'] as String;
 
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('accessToken', newAccessToken);
+      await prefs.setString('accessToken', _accessToken);
 
-      if (mounted) {
-        setState(() {
-          _accessToken = newAccessToken; // Update local state
-        });
-      }
+      if (mounted) setState(() {});
       return true;
     } else {
-      // Refresh failed. Force re-login.
-      await (await SharedPreferences.getInstance()).clear();
-
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/login');
-      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      if (mounted) Navigator.pushReplacementNamed(context, '/login');
       return false;
     }
   }
 
-  // Handler for when 401 is received, attempts refresh
+  // Called when API returns 401
   void _handleUnauthorized() async {
-    // The utility already attempts refresh and navigates if it fails.
     await _refreshTokenUtility();
   }
 
-
   @override
   Widget build(BuildContext context) {
-    // FIX: Show a loading indicator until the token is loaded
     if (!_tokenLoaded) {
       return Scaffold(
         appBar: AppBar(title: const Text("Finance Management")),
@@ -115,42 +110,44 @@ class _FinanceScreenState extends State<FinanceScreen> {
       );
     }
 
-    // Existing content logic remains the same, but now it runs
-    // only after _tokenLoaded is true and the 'token' variable is set.
     Widget content;
 
-    // CRITICAL: Pass access token and the token utility to all screens
     switch (selectedCategory) {
       case 'Expense Management':
         content = ExpenseManagementScreen(
-          token: _accessToken, // Use the correct local token state
+          token: _accessToken,
           refreshTokenUtility: _refreshTokenUtility,
           handleUnauthorized: _handleUnauthorized,
         );
         break;
+
+      case 'Adjustment Management':
+        content = AdjustmentManagementScreen(
+          token: _accessToken,
+          shopId: _userShopId ?? 1, // fallback to 1 if null
+          refreshTokenUtility: _refreshTokenUtility,
+          handleUnauthorized: _handleUnauthorized,
+        );
+        break;
+
       case 'Revenue Reports':
         content = const RevenueReportsScreen();
         break;
-      case 'Adjustment Management':
-        content = AdjustmentManagementScreen(
-          token: _accessToken, // Use the correct local token state
-          shopId: selectedShopId,
-          refreshTokenUtility: _refreshTokenUtility,
-          handleUnauthorized: _handleUnauthorized,
-        );
-        break;
+
       case 'Payroll Analytics':
         content = PayrollScreen(
-          token: _accessToken, // Use the correct local token state
+          token: _accessToken,
           refreshTokenUtility: _refreshTokenUtility,
           handleUnauthorized: _handleUnauthorized,
         );
         break;
+
       case 'Profit & Loss':
         content = ProfitLossScreen(
-          token: _accessToken, // Use the correct local token state
+          token: _accessToken,
           refreshTokenUtility: _refreshTokenUtility,
           handleUnauthorized: _handleUnauthorized,
+          shopId: _userShopId ?? 1, // fallback to safe default
         );
         break;
 
@@ -242,7 +239,12 @@ class _ExpenseManagementScreenState extends State<ExpenseManagementScreen> {
   }
 
   // CRITICAL FIX: Reusable API Call Helper with Token Refresh/Retry
-  Future<http.Response> _makeApiCall(String method, String url, {Map<String, dynamic>? payload, int retryCount = 0}) async {
+  Future<http.Response> _makeApiCall(
+    String method,
+    String url, {
+    Map<String, dynamic>? payload,
+    int retryCount = 0,
+  }) async {
     final uri = Uri.parse(url);
     final body = payload != null ? jsonEncode(payload) : null;
     http.Response response;
@@ -275,18 +277,25 @@ class _ExpenseManagementScreenState extends State<ExpenseManagementScreen> {
       if (success) {
         final prefs = await SharedPreferences.getInstance();
         if (mounted) {
-          setState(() { // Update local state
+          setState(() {
+            // Update local state
             _currentAccessToken = prefs.getString('accessToken') ?? '';
           });
         }
-        return _makeApiCall(method, url, payload: payload, retryCount: 1); // Retry
+        return _makeApiCall(
+          method,
+          url,
+          payload: payload,
+          retryCount: 1,
+        ); // Retry
       }
     }
     return response;
   }
 
   Future<void> fetchData() async {
-    if (_currentAccessToken.isEmpty) { // Use local token
+    if (_currentAccessToken.isEmpty) {
+      // Use local token
       setState(() => loading = false);
       return;
     }
@@ -314,9 +323,9 @@ class _ExpenseManagementScreenState extends State<ExpenseManagementScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error fetching data: $e")),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error fetching data: $e")));
       }
     } finally {
       setState(() => loading = false);
@@ -339,8 +348,9 @@ class _ExpenseManagementScreenState extends State<ExpenseManagementScreen> {
       if (res.statusCode == 204) fetchData();
     } catch (e) {
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text("Error deleting: $e")));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error deleting: $e")));
     }
   }
 
@@ -351,8 +361,9 @@ class _ExpenseManagementScreenState extends State<ExpenseManagementScreen> {
         builder: (_) => ExpenseFormScreen(
           expense: expense,
           shops: shops,
-          totalMonthlySalary: totalMonthlySalary,
-          // No token needed here as form returns payload to this screen to save
+          accessToken: _currentAccessToken, // <-- pass the JWT access token
+          refreshTokenUtility:
+              widget.refreshTokenUtility, // <-- pass refresh function
         ),
       ),
     );
@@ -370,8 +381,9 @@ class _ExpenseManagementScreenState extends State<ExpenseManagementScreen> {
         fetchData();
       } catch (e) {
         if (mounted)
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text("Error saving: $e")));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text("Error saving: $e")));
       }
     }
   }
@@ -385,76 +397,87 @@ class _ExpenseManagementScreenState extends State<ExpenseManagementScreen> {
         child: loading
             ? const Center(child: CircularProgressIndicator())
             : Column(
-          children: [
-            ElevatedButton.icon(
-              onPressed: () => _navigateToForm(),
-              icon: const Icon(Icons.add),
-              label: const Text("Add Expense"),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  columns: const [
-                    DataColumn(label: Text("ID")),
-                    DataColumn(label: Text("Shop")),
-                    DataColumn(label: Text("Date")),
-                    DataColumn(label: Text("Category")),
-                    DataColumn(label: Text("Amount")),
-                    DataColumn(label: Text("Actions")),
-                  ],
-                  rows: expenses.map((e) {
-                    final shopName = e['shop'] is Map
-                        ? (e['shop']['name'] ?? '')
-                        : e['shop']?.toString() ?? '';
-                    final amount = parseDouble(e['amount']);
-
-                    return DataRow(cells: [
-                      DataCell(Text(e['id'].toString())),
-                      DataCell(Text(shopName)),
-                      DataCell(Text(e['date'].toString())),
-                      DataCell(Text(e['category'].toString())),
-                      DataCell(Text("\$${amount.toStringAsFixed(2)}")),
-                      DataCell(Row(
-                        children: [
-                          IconButton(
-                            icon:
-                            const Icon(Icons.edit, color: Colors.blue),
-                            onPressed: () =>
-                                _navigateToForm(expense: e),
-                          ),
-                          IconButton(
-                            icon:
-                            const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () => _deleteExpense(e['id']),
-                          ),
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () => _navigateToForm(),
+                    icon: const Icon(Icons.add),
+                    label: const Text("Add Expense"),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columns: const [
+                          DataColumn(label: Text("ID")),
+                          DataColumn(label: Text("Shop")),
+                          DataColumn(label: Text("Date")),
+                          DataColumn(label: Text("Category")),
+                          DataColumn(label: Text("Amount")),
+                          DataColumn(label: Text("Actions")),
                         ],
-                      )),
-                    ]);
-                  }).toList(),
-                ),
+                        rows: expenses.map((e) {
+                          final shopName = e['shop'] is Map
+                              ? (e['shop']['name'] ?? '')
+                              : e['shop']?.toString() ?? '';
+                          final amount = parseDouble(e['amount']);
+
+                          return DataRow(
+                            cells: [
+                              DataCell(Text(e['id'].toString())),
+                              DataCell(Text(shopName)),
+                              DataCell(Text(e['date'].toString())),
+                              DataCell(Text(e['category'].toString())),
+                              DataCell(Text("\$${amount.toStringAsFixed(2)}")),
+                              DataCell(
+                                Row(
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.edit,
+                                        color: Colors.blue,
+                                      ),
+                                      onPressed: () =>
+                                          _navigateToForm(expense: e),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.delete,
+                                        color: Colors.red,
+                                      ),
+                                      onPressed: () => _deleteExpense(e['id']),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
 }
+
 /// ====================================
 /// Expense Form Screen (Unchanged - no API calls)
 /// ====================================
 class ExpenseFormScreen extends StatefulWidget {
   final Map<String, dynamic>? expense;
   final List<Map<String, dynamic>> shops;
-  final double totalMonthlySalary;
+  final String accessToken;
+  final RefreshTokenUtility refreshTokenUtility;
 
   const ExpenseFormScreen({
     super.key,
     this.expense,
     required this.shops,
-    this.totalMonthlySalary = 0.0,
+    required this.accessToken,
+    required this.refreshTokenUtility,
   });
 
   @override
@@ -463,11 +486,14 @@ class ExpenseFormScreen extends StatefulWidget {
 
 class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
   final _formKey = GlobalKey<FormState>();
-  late TextEditingController dateController;
-  late TextEditingController amountController;
-  late TextEditingController descriptionController;
+
+  int? selectedMonth;
+  int? selectedYear;
   String? selectedCategory;
   int? selectedShopId;
+
+  TextEditingController amountController = TextEditingController();
+  TextEditingController descriptionController = TextEditingController();
 
   final List<String> categories = [
     "RENT",
@@ -475,111 +501,223 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
     "SALARY",
     "MARKETING",
     "SUPPLIES",
-    "OTHER"
+    "OTHER",
   ];
 
   @override
   void initState() {
     super.initState();
-    dateController =
-        TextEditingController(text: widget.expense?['date'] ?? "");
-    amountController =
-        TextEditingController(text: widget.expense?['amount']?.toString() ?? "");
-    descriptionController =
-        TextEditingController(text: widget.expense?['description'] ?? "");
-    selectedCategory = widget.expense?['category'] ?? "OTHER";
+    final expense = widget.expense;
 
-    final shop = widget.expense?['shop'];
-    if (shop is Map) {
-      selectedShopId = shop['id'] as int?;
-    } else if (shop is int) {
-      selectedShopId = shop;
+    if (expense != null) {
+      selectedCategory = expense['category'] ?? 'OTHER';
+      selectedShopId = expense['shop'] is Map
+          ? expense['shop']['id']
+          : expense['shop'];
+      descriptionController.text = expense['description'] ?? '';
+      amountController.text = (expense['amount'] ?? '').toString();
+
+      if (expense['date'] != null) {
+        final date = DateTime.parse(expense['date']);
+        selectedMonth = date.month;
+        selectedYear = date.year;
+      }
+    } else {
+      selectedCategory = 'OTHER';
+      selectedMonth = DateTime.now().month;
+      selectedYear = DateTime.now().year;
+    }
+
+    _maybeFetchAutoAmount();
+  }
+
+  void _maybeFetchAutoAmount() {
+    if (selectedMonth != null &&
+        selectedYear != null &&
+        selectedCategory != null) {
+      if (selectedCategory == 'SALARY') {
+        fetchSalary(selectedMonth!, selectedYear!);
+      } else if (selectedCategory == 'SUPPLIES') {
+        fetchSupplies(selectedMonth!, selectedYear!);
+      } else {
+        // For other categories, clear amount
+        setState(() => amountController.text = '');
+      }
+    }
+  }
+
+  Future<void> fetchSupplies(int month, int year) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$_API_BASE_URL/suppliers/monthly_summary/?month=$month&year=$year',
+        ),
+        headers: {'Authorization': 'Bearer ${widget.accessToken}'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final totalSupplies = (data['total_supplies'] ?? 0).toDouble();
+
+        setState(() {
+          amountController.text = totalSupplies.toStringAsFixed(2);
+        });
+      } else if (response.statusCode == 401) {
+        final refreshed = await widget.refreshTokenUtility();
+        if (refreshed) fetchSupplies(month, year);
+      }
+    } catch (e) {
+      debugPrint('Error fetching supplies total: $e');
+    }
+  }
+
+  Future<void> fetchSalary(int month, int year) async {
+    if (selectedMonth == null || selectedYear == null) return;
+
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$_API_BASE_URL/payrolls/monthly_summary/?month=$selectedMonth&year=$selectedYear',
+        ),
+        headers: {'Authorization': 'Bearer ${widget.accessToken}'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final netSalary = (data['total_net_pay'] ?? 0).toDouble();
+        setState(() {
+          amountController.text = netSalary.toStringAsFixed(2);
+        });
+      } else if (response.statusCode == 401) {
+        // Try refreshing token
+        final refreshed = await widget.refreshTokenUtility();
+        if (refreshed) fetchSalary(month, year);
+      }
+    } catch (e) {
+      debugPrint('Error fetching net payroll: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar:
-      AppBar(title: Text(widget.expense == null ? "Add Expense" : "Edit Expense")),
+      appBar: AppBar(
+        title: Text(widget.expense == null ? 'Add Expense' : 'Edit Expense'),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
           child: ListView(
             children: [
+              // Shop
               DropdownButtonFormField<int>(
-                value: selectedShopId,
-                decoration: const InputDecoration(labelText: "Shop"),
+                value: widget.shops.any((s) => s['id'] == selectedShopId)
+                    ? selectedShopId
+                    : null,
+                decoration: const InputDecoration(labelText: 'Shop'),
                 items: widget.shops
-                    .map((s) => DropdownMenuItem<int>(
-                  value: s['id'],
-                  child: Text(s['name']),
-                ))
+                    .map(
+                      (s) => DropdownMenuItem<int>(
+                        value: s['id'] is int
+                            ? s['id'] as int
+                            : int.parse(s['id'].toString()),
+                        child: Text(s['name'].toString()),
+                      ),
+                    )
                     .toList(),
                 onChanged: (v) => setState(() => selectedShopId = v),
-                validator: (v) => v == null ? "Select a shop" : null,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: dateController,
-                decoration: const InputDecoration(labelText: "Date (YYYY-MM-DD)"),
-                validator: (v) => v == null || v.isEmpty ? "Required" : null,
+                validator: (v) => v == null ? 'Select a shop' : null,
               ),
               const SizedBox(height: 16),
 
+              // Month
+              DropdownButtonFormField<int>(
+                value: selectedMonth,
+                decoration: const InputDecoration(labelText: 'Month'),
+                items: List.generate(12, (i) => i + 1)
+                    .map((m) => DropdownMenuItem(value: m, child: Text('$m')))
+                    .toList(),
+                onChanged: (v) {
+                  setState(() => selectedMonth = v);
+                  _maybeFetchAutoAmount();
+                },
+                validator: (v) => v == null ? 'Select a month' : null,
+              ),
+              const SizedBox(height: 16),
+
+              // Year
+              DropdownButtonFormField<int>(
+                value: selectedYear,
+                decoration: const InputDecoration(labelText: 'Year'),
+                items: List.generate(10, (i) => DateTime.now().year - i)
+                    .map((y) => DropdownMenuItem(value: y, child: Text('$y')))
+                    .toList(),
+                onChanged: (v) {
+                  setState(() => selectedYear = v);
+                  _maybeFetchAutoAmount();
+                },
+                validator: (v) => v == null ? 'Select a year' : null,
+              ),
+              const SizedBox(height: 16),
+
+              // Category
               DropdownButtonFormField<String>(
                 value: selectedCategory,
-                decoration: const InputDecoration(labelText: "Category"),
+                decoration: const InputDecoration(labelText: 'Category'),
                 items: categories
                     .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                     .toList(),
                 onChanged: (v) {
                   setState(() {
                     selectedCategory = v;
+                    _maybeFetchAutoAmount();
 
-                    if (selectedCategory == 'SALARY' && widget.expense == null) {
-                      final totalSalary = widget.totalMonthlySalary.toStringAsFixed(2);
-                      amountController.text = totalSalary;
-                    }
-                    else if (selectedCategory != 'SALARY') {
-                      if (amountController.text == widget.totalMonthlySalary.toStringAsFixed(2)) {
-                        amountController.text = '';
-                      }
+                    // Clear amount if not SALARY or SUPPLIES
+                    if (selectedCategory != 'SALARY' &&
+                        selectedCategory != 'SUPPLIES') {
+                      amountController.text = '';
                     }
                   });
                 },
+
+                validator: (v) => v == null ? 'Select a category' : null,
               ),
               const SizedBox(height: 16),
 
+              // Amount
               TextFormField(
                 controller: amountController,
-                decoration: const InputDecoration(labelText: "Amount"),
+                decoration: const InputDecoration(labelText: 'Amount'),
                 keyboardType: TextInputType.number,
-                validator: (v) => v == null || v.isEmpty ? "Required" : null,
+                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
               ),
               const SizedBox(height: 16),
 
+              // Description
               TextFormField(
                 controller: descriptionController,
-                decoration: const InputDecoration(labelText: "Description"),
-                validator: (v) => v == null || v.isEmpty ? "Required" : null,
+                decoration: const InputDecoration(labelText: 'Description'),
+                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
               ),
               const SizedBox(height: 20),
+
               ElevatedButton(
                 onPressed: () {
                   if (_formKey.currentState!.validate()) {
                     final newExpense = {
                       "shop": selectedShopId,
-                      "date": dateController.text,
+                      "date":
+                          "${selectedYear!.toString().padLeft(4, '0')}-${selectedMonth!.toString().padLeft(2, '0')}-01",
                       "category": selectedCategory,
                       "amount": double.tryParse(amountController.text) ?? 0,
                       "description": descriptionController.text,
                     };
+
                     Navigator.pop(context, newExpense);
                   }
                 },
-                child: const Text("Save"),
+                child: const Text('Save'),
               ),
             ],
           ),
@@ -588,6 +726,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
     );
   }
 }
+
 /// ====================================
 /// Revenue Reports (read-only)
 /// ====================================
@@ -604,16 +743,21 @@ class RevenueReportsScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: revenues
-          .map((r) => Card(
-        child: ListTile(
-          title: Text("Month: ${r['month']}"),
-          subtitle: Text("Revenue: \$${(r['amount'] as double).toStringAsFixed(2)}"),
-        ),
-      ))
+          .map(
+            (r) => Card(
+              child: ListTile(
+                title: Text("Month: ${r['month']}"),
+                subtitle: Text(
+                  "Revenue: \$${(r['amount'] as double).toStringAsFixed(2)}",
+                ),
+              ),
+            ),
+          )
           .toList(),
     );
   }
 }
+
 /// ====================================
 /// Payroll Screen (Analytics)
 /// ====================================
@@ -659,7 +803,12 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   // CRITICAL FIX: Reusable API Call Helper with Token Refresh/Retry
-  Future<http.Response> _makeApiCall(String method, String url, {Map<String, dynamic>? payload, int retryCount = 0}) async {
+  Future<http.Response> _makeApiCall(
+    String method,
+    String url, {
+    Map<String, dynamic>? payload,
+    int retryCount = 0,
+  }) async {
     final uri = Uri.parse(url);
     final body = payload != null ? jsonEncode(payload) : null;
     http.Response response;
@@ -692,20 +841,26 @@ class _PayrollScreenState extends State<PayrollScreen> {
       if (success) {
         final prefs = await SharedPreferences.getInstance();
         if (mounted) {
-          setState(() { // Update local state
+          setState(() {
+            // Update local state
             _currentAccessToken = prefs.getString('accessToken') ?? '';
           });
         }
-        return _makeApiCall(method, url, payload: payload, retryCount: 1); // Retry
+        return _makeApiCall(
+          method,
+          url,
+          payload: payload,
+          retryCount: 1,
+        ); // Retry
       }
     }
     return response;
   }
 
-
   Future<void> fetchPayrolls() async {
     // Guard clause to prevent API call with an empty token
-    if (_currentAccessToken.isEmpty) { // Use local token
+    if (_currentAccessToken.isEmpty) {
+      // Use local token
       setState(() => loading = false);
       return;
     }
@@ -724,7 +879,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
       }
     } catch (e) {
       if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -762,7 +919,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
       if (res.statusCode == 204) fetchPayrolls();
     } catch (e) {
       if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
   }
 
@@ -772,7 +931,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
     // Add a check to inform the user if the token is empty (which should be prevented by FinanceScreen fix)
     if (_currentAccessToken.isEmpty) {
-      return const Center(child: Text("Authentication required. Please wait or relogin."));
+      return const Center(
+        child: Text("Authentication required. Please wait or relogin."),
+      );
     }
 
     return Padding(
@@ -785,7 +946,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
             label: const Text("Add Payroll"),
           ),
           const SizedBox(height: 16),
-          Expanded( // FIX: Added Expanded to prevent render overflow
+          Expanded(
+            // FIX: Added Expanded to prevent render overflow
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
@@ -800,7 +962,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   DataColumn(label: Text("Actions")),
                 ],
                 rows: payrolls.map((p) {
-                  final employeeName = p['employee']?['user']?['username'] ?? p['employeeName'] ?? '';
+                  final employeeName =
+                      p['employee']?['user']?['username'] ??
+                      p['employeeName'] ??
+                      '';
 
                   // Use safe parsing to prevent the 'String' is not a subtype of 'num' error
                   final salary = parseDouble(p['salary']);
@@ -808,28 +973,32 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   final deductions = parseDouble(p['deductions']);
                   final netPay = parseDouble(p['net_pay']);
 
-                  return DataRow(cells: [
-                    DataCell(Text(p['id'].toString())),
-                    DataCell(Text(employeeName)),
-                    DataCell(Text(p['month'] ?? '')),
-                    // Use formatted safe numbers
-                    DataCell(Text("\$${salary.toStringAsFixed(2)}")),
-                    DataCell(Text("\$${bonus.toStringAsFixed(2)}")),
-                    DataCell(Text("\$${deductions.toStringAsFixed(2)}")),
-                    DataCell(Text("\$${netPay.toStringAsFixed(2)}")),
-                    DataCell(Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.edit, color: Colors.blue),
-                          onPressed: () => _navigateToForm(payroll: p),
+                  return DataRow(
+                    cells: [
+                      DataCell(Text(p['id'].toString())),
+                      DataCell(Text(employeeName)),
+                      DataCell(Text(p['month'] ?? '')),
+                      // Use formatted safe numbers
+                      DataCell(Text("\$${salary.toStringAsFixed(2)}")),
+                      DataCell(Text("\$${bonus.toStringAsFixed(2)}")),
+                      DataCell(Text("\$${deductions.toStringAsFixed(2)}")),
+                      DataCell(Text("\$${netPay.toStringAsFixed(2)}")),
+                      DataCell(
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit, color: Colors.blue),
+                              onPressed: () => _navigateToForm(payroll: p),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => _deletePayroll(p['id']),
+                            ),
+                          ],
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () => _deletePayroll(p['id']),
-                        ),
-                      ],
-                    )),
-                  ]);
+                      ),
+                    ],
+                  );
                 }).toList(),
               ),
             ),
@@ -866,7 +1035,12 @@ double _calculateBonusAmount({required double salary, required String rating}) {
 
 class PayrollFormScreen extends StatefulWidget {
   final Map<String, dynamic>? payroll;
-  const PayrollFormScreen({super.key, this.payroll, required String accessToken, required RefreshTokenUtility refreshTokenUtility});
+  const PayrollFormScreen({
+    super.key,
+    this.payroll,
+    required String accessToken,
+    required RefreshTokenUtility refreshTokenUtility,
+  });
 
   @override
   State<PayrollFormScreen> createState() => _PayrollFormScreenState();
@@ -891,8 +1065,10 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
   late TextEditingController overtimeController;
 
   // Controllers for read-only auto-fetched/calculated values (for display only)
-  late TextEditingController performanceBonusController; // Holds auto-calculated bonus amount (before manual override)
-  late TextEditingController absentDaysController;       // Holds auto-fetched absent days count
+  late TextEditingController
+  performanceBonusController; // Holds auto-calculated bonus amount (before manual override)
+  late TextEditingController
+  absentDaysController; // Holds auto-fetched absent days count
 
   // Controllers for the NEW manual money input fields
   late TextEditingController manualPerformanceBonusController;
@@ -900,8 +1076,18 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
 
   List<Map<String, dynamic>> employees = [];
   final List<String> months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
   ];
 
   // Helper to find an employee's data by ID
@@ -909,18 +1095,20 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
     if (employees.isEmpty) return null;
 
     final foundEmployee = employees.firstWhere(
-          (emp) => emp['id'] == id,
+      (emp) => emp['id'] == id,
       orElse: () => <String, dynamic>{},
     );
 
     return foundEmployee.isNotEmpty ? foundEmployee : null;
   }
 
-// ---------------- FETCH PERFORMANCE RATING ----------------
+  // ---------------- FETCH PERFORMANCE RATING ----------------
   Future<void> _fetchEmployeeRating(int employeeId) async {
     try {
       // Replace ApiService.fetchEmployeePerformanceRating with your actual call
-      final rating = await ApiService.fetchEmployeePerformanceRating(employeeId);
+      final rating = await ApiService.fetchEmployeePerformanceRating(
+        employeeId,
+      );
 
       if (mounted) {
         setState(() {
@@ -936,13 +1124,13 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
     }
   }
 
-// ---------------- CALCULATE PERFORMANCE BONUS (Auto) ----------------
+  // ---------------- CALCULATE PERFORMANCE BONUS (Auto) ----------------
   void _calculatePerformanceBonus() {
     double currentSalary = double.tryParse(basicSalaryController.text) ?? 0.0;
 
     final calculatedBonus = _calculateBonusAmount(
-        salary: currentSalary,
-        rating: _employeeRating
+      salary: currentSalary,
+      rating: _employeeRating,
     );
 
     // Update the READ-ONLY side of the split field
@@ -958,7 +1146,10 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
 
       // Replace ApiService.fetchAbsentAndWorkingDays with your actual call
       final absentData = await ApiService.fetchAbsentAndWorkingDays(
-          employeeId, month, year: year);
+        employeeId,
+        month,
+        year: year,
+      );
 
       if (mounted) {
         setState(() {
@@ -973,7 +1164,7 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
         absentDaysController.text = '0';
         _totalExpectedWorkingDays = 0;
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Failed to fetch absent data."))
+          const SnackBar(content: Text("Failed to fetch absent data.")),
         );
         setState(() {});
       }
@@ -987,24 +1178,35 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
     super.initState();
 
     // Standard Controllers
-    basicSalaryController = TextEditingController(text: widget.payroll?['salary']?.toString() ?? '0');
-    bonusController = TextEditingController(text: widget.payroll?['bonus']?.toString() ?? '0');
-    deductionsController = TextEditingController(text: widget.payroll?['deductions']?.toString() ?? '0');
-    overtimeController = TextEditingController(text: widget.payroll?['overtime']?.toString() ?? '0');
+    basicSalaryController = TextEditingController(
+      text: widget.payroll?['salary']?.toString() ?? '0',
+    );
+    bonusController = TextEditingController(
+      text: widget.payroll?['bonus']?.toString() ?? '0',
+    );
+    deductionsController = TextEditingController(
+      text: widget.payroll?['deductions']?.toString() ?? '0',
+    );
+    overtimeController = TextEditingController(
+      text: widget.payroll?['overtime']?.toString() ?? '0',
+    );
 
     // Read-Only Controllers (for display of auto-calculated/fetched values)
     // We can use a default/placeholder value here, as the actual calculation happens later.
     performanceBonusController = TextEditingController(text: '0.00');
-    absentDaysController = TextEditingController(text: widget.payroll?['absent_days']?.toString() ?? '0');
+    absentDaysController = TextEditingController(
+      text: widget.payroll?['absent_days']?.toString() ?? '0',
+    );
 
     // NEW Manual Money Input Controllers
-    manualPerformanceBonusController =
-        TextEditingController(text: widget.payroll?['performance_bonus']?.toString() ?? '0');
+    manualPerformanceBonusController = TextEditingController(
+      text: widget.payroll?['performance_bonus']?.toString() ?? '0',
+    );
     // Assuming 'absent_deduction_amount' is the field for the manual deduction amount.
     // If your API uses 'absent_days' for the money, you must adjust the calculation.
-    manualAbsentDeductionController =
-        TextEditingController(text: widget.payroll?['absent_deduction_amount']?.toString() ?? '0');
-
+    manualAbsentDeductionController = TextEditingController(
+      text: widget.payroll?['absent_deduction_amount']?.toString() ?? '0',
+    );
 
     selectedEmployeeId = widget.payroll?['employee_id'] as int?;
 
@@ -1012,8 +1214,8 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
       _employeeRating = 'Checking...';
     }
 
-    selectedMonth = widget.payroll?['month'] as String?
-        ?? months[DateTime.now().month - 1];
+    selectedMonth =
+        widget.payroll?['month'] as String? ?? months[DateTime.now().month - 1];
 
     selectedDate = widget.payroll?['date'] != null
         ? DateTime.tryParse(widget.payroll!['date'])
@@ -1035,21 +1237,20 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
     super.dispose();
   }
 
-
   Future<void> fetchEmployees() async {
     try {
       // Replace ApiService.getEmployees with your actual call
       final result = await ApiService.getEmployees();
 
       if (result is List) {
-        employees = result
-            .whereType<Map<String, dynamic>>()
-            .toList();
+        employees = result.whereType<Map<String, dynamic>>().toList();
       }
 
       bool shouldAutoFetch = false;
 
-      if (widget.payroll == null && selectedEmployeeId == null && employees.isNotEmpty) {
+      if (widget.payroll == null &&
+          selectedEmployeeId == null &&
+          employees.isNotEmpty) {
         selectedEmployeeId = employees.first['id'] as int?;
         shouldAutoFetch = true;
 
@@ -1057,25 +1258,26 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
         if (employee != null && employee.containsKey('salary')) {
           basicSalaryController.text = employee['salary']?.toString() ?? '0';
         }
-      }
-      else if (selectedEmployeeId != null && selectedMonth != null) {
+      } else if (selectedEmployeeId != null && selectedMonth != null) {
         shouldAutoFetch = true;
       }
 
       setState(() {
-        if (shouldAutoFetch && selectedEmployeeId != null && selectedMonth != null) {
+        if (shouldAutoFetch &&
+            selectedEmployeeId != null &&
+            selectedMonth != null) {
           _fetchAbsentDays(selectedEmployeeId!, selectedMonth!);
           _fetchEmployeeRating(selectedEmployeeId!);
         }
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text("Failed to load employees.")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load employees.")),
+        );
       }
     }
   }
-
 
   Future<void> savePayroll() async {
     if (!_formKey.currentState!.validate()) return;
@@ -1089,8 +1291,10 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
       "overtime": double.tryParse(overtimeController.text) ?? 0.0,
 
       // *** SAVE MANUAL MONEY INPUTS ***
-      "performance_bonus": double.tryParse(manualPerformanceBonusController.text) ?? 0.0,
-      "absent_deduction_amount": double.tryParse(manualAbsentDeductionController.text) ?? 0.0,
+      "performance_bonus":
+          double.tryParse(manualPerformanceBonusController.text) ?? 0.0,
+      "absent_deduction_amount":
+          double.tryParse(manualAbsentDeductionController.text) ?? 0.0,
 
       // Save the absent days count as well, as it's separate from the deduction amount
       "absent_days": int.tryParse(absentDaysController.text) ?? 0,
@@ -1102,16 +1306,19 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
       Map<String, dynamic> savedPayroll;
       // Replace ApiService.updatePayroll/addPayroll with your actual calls
       if (widget.payroll != null && widget.payroll!['id'] is int) {
-        savedPayroll = await ApiService.updatePayroll(widget.payroll!['id'], data);
+        savedPayroll = await ApiService.updatePayroll(
+          widget.payroll!['id'],
+          data,
+        );
       } else {
         savedPayroll = await ApiService.addPayroll(data);
       }
       if (mounted) Navigator.pop(context, savedPayroll);
-
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to save payroll: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to save payroll: $e')));
       }
     }
   }
@@ -1123,16 +1330,22 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
     final overtime = double.tryParse(overtimeController.text) ?? 0;
 
     // *** USE MANUAL INPUT CONTROLLERS FOR MONETARY VALUES ***
-    final perfBonus = double.tryParse(manualPerformanceBonusController.text) ?? 0;
-    final absentDeduction = double.tryParse(manualAbsentDeductionController.text) ?? 0;
+    final perfBonus =
+        double.tryParse(manualPerformanceBonusController.text) ?? 0;
+    final absentDeduction =
+        double.tryParse(manualAbsentDeductionController.text) ?? 0;
 
     final deductions = double.tryParse(deductionsController.text) ?? 0;
 
     return basic + bonus + overtime + perfBonus - deductions - absentDeduction;
   }
 
-  Widget _buildNumberField(String label, TextEditingController controller,
-      {bool isInt = false, bool readOnly = false}) {
+  Widget _buildNumberField(
+    String label,
+    TextEditingController controller, {
+    bool isInt = false,
+    bool readOnly = false,
+  }) {
     return Column(
       children: [
         TextFormField(
@@ -1140,7 +1353,8 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
           decoration: InputDecoration(labelText: label),
           keyboardType: TextInputType.numberWithOptions(decimal: !isInt),
           readOnly: readOnly,
-          validator: (v) => v == null || v.isEmpty || double.tryParse(v!) == null
+          validator: (v) =>
+              v == null || v.isEmpty || double.tryParse(v!) == null
               ? "Enter a valid number"
               : null,
           onChanged: (_) {
@@ -1165,9 +1379,13 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
     const double maxFormWidth = 600.0;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.payroll != null ? "Edit Payroll" : "Add Payroll")),
-      body: Center( // Center the content horizontally
-        child: ConstrainedBox( // Constrain the maximum width
+      appBar: AppBar(
+        title: Text(widget.payroll != null ? "Edit Payroll" : "Add Payroll"),
+      ),
+      body: Center(
+        // Center the content horizontally
+        child: ConstrainedBox(
+          // Constrain the maximum width
           constraints: const BoxConstraints(maxWidth: maxFormWidth),
           child: Form(
             key: _formKey,
@@ -1176,7 +1394,6 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-
                   // --- Section: Employee & Pay Period ---
                   Text(
                     "Employee & Pay Period Details",
@@ -1193,17 +1410,20 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                       helperStyle: TextStyle(color: theme.colorScheme.primary),
                     ),
                     items: employees
-                        .map((emp) => DropdownMenuItem<int>(
-                      value: emp['id'],
-                      child: Text(emp['user']?['username'] ?? 'No Name'),
-                    ))
+                        .map(
+                          (emp) => DropdownMenuItem<int>(
+                            value: emp['id'],
+                            child: Text(emp['user']?['username'] ?? 'No Name'),
+                          ),
+                        )
                         .toList(),
                     onChanged: (v) {
                       selectedEmployeeId = v;
 
                       if (v != null) {
                         final employee = _findEmployee(v);
-                        basicSalaryController.text = employee?['salary']?.toString() ?? '0';
+                        basicSalaryController.text =
+                            employee?['salary']?.toString() ?? '0';
 
                         if (selectedMonth != null) {
                           _fetchAbsentDays(v, selectedMonth!);
@@ -1224,11 +1444,17 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                   // Month Dropdown
                   DropdownButtonFormField<String>(
                     value: selectedMonth,
-                    decoration: const InputDecoration(labelText: "Month of Payroll"),
-                    items: months.map((m) => DropdownMenuItem<String>(
-                      value: m,
-                      child: Text(m),
-                    )).toList(),
+                    decoration: const InputDecoration(
+                      labelText: "Month of Payroll",
+                    ),
+                    items: months
+                        .map(
+                          (m) => DropdownMenuItem<String>(
+                            value: m,
+                            child: Text(m),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (v) {
                       selectedMonth = v;
 
@@ -1247,7 +1473,8 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text(
-                        "Payment Date: ${selectedDate != null ? selectedDate!.toLocal().toString().split(' ')[0] : 'Not Set'}"),
+                      "Payment Date: ${selectedDate != null ? selectedDate!.toLocal().toString().split(' ')[0] : 'Not Set'}",
+                    ),
                     trailing: OutlinedButton.icon(
                       onPressed: () async {
                         final picked = await showDatePicker(
@@ -1256,7 +1483,8 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                           firstDate: DateTime(2000),
                           lastDate: DateTime(2100),
                         );
-                        if (picked != null) setState(() => selectedDate = picked);
+                        if (picked != null)
+                          setState(() => selectedDate = picked);
                       },
                       icon: const Icon(Icons.calendar_today, size: 18),
                       label: const Text("Pick Date"),
@@ -1280,7 +1508,10 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                   // --- Section: Deductions & Adjustments ---
                   Padding(
                     padding: const EdgeInsets.only(top: 16, bottom: 8),
-                    child: Text("Deductions & Adjustments", style: theme.textTheme.titleMedium),
+                    child: Text(
+                      "Deductions & Adjustments",
+                      style: theme.textTheme.titleMedium,
+                    ),
                   ),
 
                   // Deductions (Editable)
@@ -1299,17 +1530,26 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                       Expanded(
                         child: TextFormField(
                           // We now use a dummy controller or a simplified one, as the value is now driven by _employeeRating
-                          controller: TextEditingController(text: _employeeRating),
+                          controller: TextEditingController(
+                            text: _employeeRating,
+                          ),
                           decoration: InputDecoration(
                             labelText: "Performance Status",
-                            suffixIcon: const Icon(Icons.star, color: Colors.amber),
+                            suffixIcon: const Icon(
+                              Icons.star,
+                              color: Colors.amber,
+                            ),
                             filled: true,
                             fillColor: Colors.grey.shade100,
                             border: const OutlineInputBorder(),
                             // Removed the helperText as the label/value now clearly shows the status
                           ),
                           readOnly: true, // READ ONLY
-                          style: TextStyle(fontWeight: FontWeight.bold, color: theme.colorScheme.primary, fontSize: 16),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.primary,
+                            fontSize: 16,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -1323,7 +1563,8 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                             border: OutlineInputBorder(),
                           ),
                           keyboardType: TextInputType.number,
-                          onChanged: (_) => setState(() {}), // Recalculate Net Pay
+                          onChanged: (_) =>
+                              setState(() {}), // Recalculate Net Pay
                         ),
                       ),
                     ],
@@ -1365,7 +1606,8 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                             border: OutlineInputBorder(),
                           ),
                           keyboardType: TextInputType.number,
-                          onChanged: (_) => setState(() {}), // Recalculate Net Pay
+                          onChanged: (_) =>
+                              setState(() {}), // Recalculate Net Pay
                         ),
                       ),
                     ],
@@ -1387,16 +1629,22 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
-                      border: Border.all(color: theme.colorScheme.primary, width: 2),
+                      border: Border.all(
+                        color: theme.colorScheme.primary,
+                        width: 2,
+                      ),
                       borderRadius: BorderRadius.circular(8),
                       color: theme.colorScheme.primary.withOpacity(0.05),
                     ),
                     child: Center(
-                      child: Text("NET PAY: \$${netPay.toStringAsFixed(2)}",
-                          style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
-                              color: theme.colorScheme.primary)),
+                      child: Text(
+                        "NET PAY: \$${netPay.toStringAsFixed(2)}",
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
                     ),
                   ),
 
@@ -1409,10 +1657,17 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 15),
                       backgroundColor: theme.colorScheme.primary,
                       foregroundColor: theme.colorScheme.onPrimary,
-                      textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      textStyle: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                       elevation: 4,
                     ),
-                    child: Text(widget.payroll != null ? "Update Payroll" : "Save Payroll"),
+                    child: Text(
+                      widget.payroll != null
+                          ? "Update Payroll"
+                          : "Save Payroll",
+                    ),
                   ),
                 ],
               ),
@@ -1423,18 +1678,20 @@ class _PayrollFormScreenState extends State<PayrollFormScreen> {
     );
   }
 }
+
 //////////////////  ProfitLossScreen  ///////////////////
 class ProfitLossScreen extends StatefulWidget {
   final String token;
-  // FIX 1: Add RefreshTokenUtility and handleUnauthorized
   final RefreshTokenUtility refreshTokenUtility;
   final VoidCallback handleUnauthorized;
+  final int shopId;
 
   const ProfitLossScreen({
     super.key,
     required this.token,
-    required this.refreshTokenUtility, // REQUIRED
-    required this.handleUnauthorized,  // REQUIRED
+    required this.refreshTokenUtility,
+    required this.handleUnauthorized,
+    required this.shopId,
   });
 
   @override
@@ -1444,14 +1701,16 @@ class ProfitLossScreen extends StatefulWidget {
 class _ProfitLossScreenState extends State<ProfitLossScreen> {
   String selectedPeriod = "Monthly";
   int selectedIndex = 0;
-  int shopId = 1;
+  DateTime? _customStartDate;
+  DateTime? _customEndDate;
+
   List<Map<String, double>> monthlyData = [];
   List<Map<String, double>> yearlyData = [];
   bool loading = true;
-  final NumberFormat currency = NumberFormat.currency(locale: 'en_US', symbol: '\$');
 
-  // FIX 2: Use a mutable token state, initialized from the widget
   late String _currentAccessToken;
+
+  final NumberFormat currency = NumberFormat.currency(locale: 'en_US', symbol: '\$');
 
   @override
   void initState() {
@@ -1460,7 +1719,6 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
     fetchFinancialData();
   }
 
-  // Helper to get headers with the current token
   Map<String, String> get headers => {
     'Content-Type': 'application/json',
     'Authorization': 'Bearer $_currentAccessToken',
@@ -1474,27 +1732,29 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
     return 0.0;
   }
 
-  // FIX 3: Refactor the API call logic to support retry after token refresh
   Future<http.Response> _fetchReportApi({int retryCount = 0}) async {
-    final url = '$_API_BASE_URL/shop_report/?shop_id=$shopId&period=monthly';
+    String periodParam = selectedPeriod.toLowerCase();
+    String url = '$_API_BASE_URL/shop_report/?shop_id=${widget.shopId}&period=$periodParam';
+
+    if (periodParam == 'custom' && _customStartDate != null && _customEndDate != null) {
+      final startStr = _customStartDate!.toIso8601String().split('T').first;
+      final endStr = _customEndDate!.toIso8601String().split('T').first;
+      url += '&start_date=$startStr&end_date=$endStr';
+    }
 
     final res = await http.get(Uri.parse(url), headers: headers);
 
     if (res.statusCode == 401 && retryCount == 0) {
-      final success = await widget.refreshTokenUtility(); // Attempt refresh
-
+      final success = await widget.refreshTokenUtility();
       if (success) {
-        // Update local token state with the new token
         final prefs = await SharedPreferences.getInstance();
         if (mounted) {
-          setState(() {
-            _currentAccessToken = prefs.getString('accessToken') ?? '';
-          });
+          setState(() => _currentAccessToken = prefs.getString('accessToken') ?? '');
         }
-        // Retry the request once with the new token
         return _fetchReportApi(retryCount: 1);
       }
     }
+
     return res;
   }
 
@@ -1505,28 +1765,23 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
     }
 
     setState(() => loading = true);
+
     try {
-      // FIX 4: Use the refactored API call helper
       final res = await _fetchReportApi();
 
       if (res.statusCode == 401) {
-        // If it's still 401 after the retry attempt, handle unauthorized
         widget.handleUnauthorized();
         return;
       }
 
-      if (res.statusCode != 200) {
-        throw Exception('Failed to fetch shop report: ${res.statusCode}');
-      }
+      if (res.statusCode != 200) throw Exception('Failed to fetch shop report: ${res.statusCode}');
 
       final data = json.decode(res.body);
 
+      // Build monthly map
       Map<String, Map<String, double>> monthlyMap = {};
-
       for (var item in data['pl_details'] ?? []) {
-        final dateStr = item['date'] ?? DateTime.now().toIso8601String();
-        final month = dateStr.substring(5, 7);
-
+        final month = item['date']?.substring(5, 7) ?? '00';
         monthlyMap.putIfAbsent(month, () => {
           'Revenue': 0.0,
           'COGS': 0.0,
@@ -1534,13 +1789,9 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
           'Operating Expenses': 0.0,
           'Other Expenses': 0.0,
         });
-
-        monthlyMap[month]!['Revenue'] =
-            (monthlyMap[month]!['Revenue'] ?? 0) + parseDouble(item['revenue']);
-        monthlyMap[month]!['COGS'] =
-            (monthlyMap[month]!['COGS'] ?? 0) + parseDouble(item['cogs']);
-        monthlyMap[month]!['Waste Loss'] =
-            (monthlyMap[month]!['Waste Loss'] ?? 0) + parseDouble(item['waste_loss']);
+        monthlyMap[month]!['Revenue'] = (monthlyMap[month]!['Revenue'] ?? 0) + parseDouble(item['revenue']);
+        monthlyMap[month]!['COGS'] = (monthlyMap[month]!['COGS'] ?? 0) + parseDouble(item['cogs']);
+        monthlyMap[month]!['Waste Loss'] = (monthlyMap[month]!['Waste Loss'] ?? 0) + parseDouble(item['waste_loss']);
       }
 
       final totalExpenses = parseDouble(data['total_expenses']);
@@ -1551,16 +1802,13 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
         monthlyMap[month]!['Other Expenses'] = totalAdjustments;
       }
 
-      monthlyData = monthlyMap.values
-          .map((e) => e.map((k, v) => MapEntry(k, v.toDouble())))
-          .toList();
+      monthlyData = monthlyMap.values.map((e) => e.map((k, v) => MapEntry(k, v.toDouble()))).toList();
 
       yearlyData = [
         {
           'Revenue': monthlyData.fold(0.0, (sum, e) => sum + (e['Revenue'] ?? 0.0)),
           'COGS': monthlyData.fold(0.0, (sum, e) => sum + (e['COGS'] ?? 0.0)),
-          'Waste Loss':
-          monthlyData.fold(0.0, (sum, e) => sum + (e['Waste Loss'] ?? 0.0)),
+          'Waste Loss': monthlyData.fold(0.0, (sum, e) => sum + (e['Waste Loss'] ?? 0.0)),
           'Operating Expenses': totalExpenses,
           'Other Expenses': totalAdjustments,
         }
@@ -1569,29 +1817,41 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
       if (monthlyData.isEmpty) {
         yearlyData = [
           {
-            'Revenue': 0.0, 'COGS': 0.0, 'Waste Loss': 0.0,
-            'Operating Expenses': 0.0, 'Other Expenses': 0.0,
+            'Revenue': 0.0,
+            'COGS': 0.0,
+            'Waste Loss': 0.0,
+            'Operating Expenses': 0.0,
+            'Other Expenses': 0.0,
           }
         ];
       }
-
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Error fetching financial data: ${e.toString()}")));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: ${e.toString()}")));
+      }
     } finally {
       if (mounted) setState(() => loading = false);
     }
   }
 
+  Future<DateTimeRange?> _pickCustomDateRange(BuildContext context) async {
+    final now = DateTime.now();
+    return await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2022),
+      lastDate: now,
+      initialDateRange: DateTimeRange(start: now.subtract(const Duration(days: 7)), end: now),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final dataList = selectedPeriod == "Monthly" ? monthlyData : yearlyData;
+
     if (loading) return const Center(child: CircularProgressIndicator());
 
     final data = dataList.isNotEmpty ? dataList[selectedIndex] : null;
-    if (data == null) return const Center(child: Text("No financial data available for this period."));
+    if (data == null) return const Center(child: Text("No financial data available."));
 
     final revenue = data["Revenue"] ?? 0.0;
     final cogs = data["COGS"] ?? 0.0;
@@ -1605,7 +1865,7 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
 
     final rows = [
       {"label": "Revenue", "amount": revenue, "type": "income"},
-      {"label": "Cost of Goods Sold", "amount": cogs, "type": "expense"},
+      {"label": "COGS", "amount": cogs, "type": "expense"},
       {"label": "Waste Loss", "amount": wasteLoss, "type": "expense"},
       {"label": "Gross Profit", "amount": grossProfit, "type": "profit"},
       {"label": "Operating Expenses", "amount": operatingExpenses, "type": "expense"},
@@ -1619,56 +1879,54 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Period Selection
             Row(
               children: [
                 const Text("Report Type:", style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(width: 12),
                 DropdownButton<String>(
                   value: selectedPeriod,
-                  items: ["Monthly", "Yearly"]
+                  items: ["Daily", "Monthly", "Yearly", "Custom"]
                       .map((p) => DropdownMenuItem(value: p, child: Text(p)))
                       .toList(),
-                  onChanged: (p) => setState(() {
-                    selectedPeriod = p!;
-                    selectedIndex = 0;
-                  }),
+                  onChanged: (p) async {
+                    if (p == "Custom") {
+                      final picked = await _pickCustomDateRange(context);
+                      if (picked != null) {
+                        setState(() {
+                          selectedPeriod = p!;
+                          _customStartDate = picked.start;
+                          _customEndDate = picked.end;
+                        });
+                        fetchFinancialData();
+                      }
+                    } else {
+                      setState(() {
+                        selectedPeriod = p!;
+                        selectedIndex = 0;
+                      });
+                      fetchFinancialData();
+                    }
+                  },
                 ),
               ],
             ),
-
-            // Monthly Navigation
             if (selectedPeriod == "Monthly" && monthlyData.length > 1)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back),
-                      onPressed: selectedIndex > 0
-                          ? () => setState(() => selectedIndex--)
-                          : null,
-                    ),
-                    Text(
-                      "Record ${selectedIndex + 1} of ${monthlyData.length}",
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.arrow_forward),
-                      onPressed: selectedIndex < monthlyData.length - 1
-                          ? () => setState(() => selectedIndex++)
-                          : null,
-                    ),
-                  ],
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: selectedIndex > 0 ? () => setState(() => selectedIndex--) : null,
+                  ),
+                  Text("Record ${selectedIndex + 1} of ${monthlyData.length}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                  IconButton(
+                    icon: const Icon(Icons.arrow_forward),
+                    onPressed: selectedIndex < monthlyData.length - 1 ? () => setState(() => selectedIndex++) : null,
+                  ),
+                ],
               ),
-
             const SizedBox(height: 16),
-
-            // P&L Table/List
             Expanded(
               child: ListView.builder(
                 itemCount: rows.length,
@@ -1680,29 +1938,12 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
 
                   final isProfitLine = type == 'profit';
                   final isLoss = amount < 0;
-
-                  // For expense lines, we show the absolute value in red.
-                  // For profit lines, we show the actual sign.
-                  final displayAmount = isProfitLine || type == 'adjustment'
-                      ? amount
-                      : amount.abs();
-
+                  final displayAmount = isProfitLine || type == 'adjustment' ? amount : amount.abs();
                   final amountText = currency.format(displayAmount);
 
-                  // Color logic:
-                  // - Profit lines: Red for loss, Blue for profit.
-                  // - Expense/Income lines: Red for expense, Black for income (Revenue).
-                  Color amountColor;
-                  if (isProfitLine) {
-                    amountColor = isLoss ? Colors.red.shade700 : Colors.green.shade700;
-                  } else if (type == 'expense') {
-                    // Expenses are shown as positive figures but colored red to signify deduction
-                    amountColor = Colors.red.shade700;
-                  } else {
-                    // Income/Adjustment
-                    amountColor = Colors.black;
-                  }
-
+                  Color amountColor = type == 'expense'
+                      ? Colors.red.shade700
+                      : (isProfitLine ? (isLoss ? Colors.red.shade700 : Colors.green.shade700) : Colors.black);
 
                   return Column(
                     children: [
@@ -1711,36 +1952,13 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(
-                              label,
-                              style: TextStyle(
-                                fontWeight: isProfitLine ? FontWeight.bold : FontWeight.normal,
-                                fontSize: isProfitLine ? 16 : 14,
-                                color: isProfitLine ? Colors.blue.shade900 : Colors.black87,
-                              ),
-                            ),
-                            Text(
-                              // Only profit lines will show a negative sign for loss
-                              // Other expense/income lines will be formatted naturally.
-                              amountText,
-                              style: TextStyle(
-                                fontWeight: isProfitLine ? FontWeight.bold : FontWeight.normal,
-                                color: amountColor,
-                                // Add an underline for the final Net Profit line
-                                decoration: index == rows.length - 1 ? TextDecoration.overline : null,
-                                decorationColor: amountColor,
-                                decorationThickness: 2.0,
-                              ),
-                            ),
+                            Text(label, style: TextStyle(fontWeight: isProfitLine ? FontWeight.bold : FontWeight.normal, fontSize: isProfitLine ? 16 : 14, color: isProfitLine ? Colors.blue.shade900 : Colors.black87)),
+                            Text(amountText, style: TextStyle(fontWeight: isProfitLine ? FontWeight.bold : FontWeight.normal, color: amountColor, decoration: index == rows.length - 1 ? TextDecoration.overline : null, decorationColor: amountColor, decorationThickness: 2.0)),
                           ],
                         ),
                       ),
-                      // Add a divider for subtotal lines like Gross Profit
-                      if (isProfitLine && index < rows.length - 1)
-                        const Divider(height: 1, thickness: 1),
-                      // Add extra spacing after Gross Profit
-                      if (label == "Gross Profit")
-                        const SizedBox(height: 8),
+                      if (isProfitLine && index < rows.length - 1) const Divider(height: 1, thickness: 1),
+                      if (label == "Gross Profit") const SizedBox(height: 8),
                     ],
                   );
                 },
@@ -1752,6 +1970,7 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
     );
   }
 }
+
 /////////// ADJUSTMENT  /////////////////////////
 // CRITICAL: Updated constructor to accept refresh logic
 class AdjustmentManagementScreen extends StatefulWidget {
@@ -1769,10 +1988,12 @@ class AdjustmentManagementScreen extends StatefulWidget {
   });
 
   @override
-  State<AdjustmentManagementScreen> createState() => _AdjustmentManagementScreenState();
+  State<AdjustmentManagementScreen> createState() =>
+      _AdjustmentManagementScreenState();
 }
 
-class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen> {
+class _AdjustmentManagementScreenState
+    extends State<AdjustmentManagementScreen> {
   late Future<List<Adjustment>> _adjustmentsFuture;
   late String _currentAccessToken;
 
@@ -1790,7 +2011,12 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
   };
 
   // CRITICAL FIX: Reusable API Call Helper with Token Refresh/Retry
-  Future<http.Response> _makeApiCall(String method, String url, {Map<String, dynamic>? payload, int retryCount = 0}) async {
+  Future<http.Response> _makeApiCall(
+    String method,
+    String url, {
+    Map<String, dynamic>? payload,
+    int retryCount = 0,
+  }) async {
     final uri = Uri.parse(url);
     final body = payload != null ? jsonEncode(payload) : null;
     http.Response response;
@@ -1823,11 +2049,17 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
       if (success) {
         final prefs = await SharedPreferences.getInstance();
         if (mounted) {
-          setState(() { // Update local token state
+          setState(() {
+            // Update local token state
             _currentAccessToken = prefs.getString('accessToken') ?? '';
           });
         }
-        return _makeApiCall(method, url, payload: payload, retryCount: 1); // Retry
+        return _makeApiCall(
+          method,
+          url,
+          payload: payload,
+          retryCount: 1,
+        ); // Retry
       }
     }
     return response;
@@ -1843,17 +2075,23 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
         widget.handleUnauthorized();
         return [];
       }
-      if (res.statusCode != 200) throw Exception('Failed to load adjustments: ${res.statusCode}');
+      if (res.statusCode != 200)
+        throw Exception('Failed to load adjustments: ${res.statusCode}');
 
       final data = json.decode(res.body);
-      final List<Map<String, dynamic>> dataList = List<Map<String, dynamic>>.from(data);
+      final List<Map<String, dynamic>> dataList =
+          List<Map<String, dynamic>>.from(data);
 
-      final List<Adjustment> allAdjustments = dataList.map((json) => Adjustment.fromJson(json)).toList();
+      final List<Adjustment> allAdjustments = dataList
+          .map((json) => Adjustment.fromJson(json))
+          .toList();
       return allAdjustments.where((adj) => adj.shop == widget.shopId).toList();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load adjustments: ${e.toString()}')),
+          SnackBar(
+            content: Text('Failed to load adjustments: ${e.toString()}'),
+          ),
         );
       }
       return [];
@@ -1887,26 +2125,44 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
 
   // D - DELETE: Delete an Adjustment (Refactored to use _makeApiCall)
   void _deleteAdjustment(int id) async {
-    final bool confirm = await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Delete'),
-        content: const Text('Are you sure you want to delete this adjustment?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Delete', style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    ) ?? false;
+    final bool confirm =
+        await showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Confirm Delete'),
+            content: const Text(
+              'Are you sure you want to delete this adjustment?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+        ) ??
+        false;
 
     if (!confirm) return;
 
     try {
       // Assuming ApiService.deleteAdjustment was essentially a DELETE request to '$_API_BASE_URL/adjustments/$id/'
-      final res = await _makeApiCall('DELETE', '$_API_BASE_URL/adjustments/$id/');
+      final res = await _makeApiCall(
+        'DELETE',
+        '$_API_BASE_URL/adjustments/$id/',
+      );
 
-      if (res.statusCode == 401) return widget.handleUnauthorized(); // Failed after retry
-      if (res.statusCode != 204) throw Exception('Deletion failed with status: ${res.statusCode}');
+      if (res.statusCode == 401)
+        return widget.handleUnauthorized(); // Failed after retry
+      if (res.statusCode != 204)
+        throw Exception('Deletion failed with status: ${res.statusCode}');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1934,7 +2190,8 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => setState(() => _adjustmentsFuture = _fetchAdjustments()),
+            onPressed: () =>
+                setState(() => _adjustmentsFuture = _fetchAdjustments()),
           ),
         ],
       ),
@@ -1946,7 +2203,9 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
           } else if (snapshot.hasError) {
             return Center(child: Text('Error: ${snapshot.error}'));
           } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('No adjustments found. Tap + to add one.'));
+            return const Center(
+              child: Text('No adjustments found. Tap + to add one.'),
+            );
           }
 
           final adjustments = snapshot.data!;
@@ -1956,21 +2215,28 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
             itemCount: adjustments.length,
             itemBuilder: (context, index) {
               final adj = adjustments[index];
-              final isIncome = adj.adjustmentType == 'GAIN'; // Use GAIN as per new logic
+              final isIncome =
+                  adj.adjustmentType == 'GAIN'; // Use GAIN as per new logic
 
               return ListTile(
                 leading: CircleAvatar(
-                  backgroundColor: isIncome ? Colors.green.shade100 : Colors.red.shade100,
+                  backgroundColor: isIncome
+                      ? Colors.green.shade100
+                      : Colors.red.shade100,
                   child: Icon(
                     isIncome ? Icons.attach_money : Icons.money_off,
-                    color: isIncome ? Colors.green.shade700 : Colors.red.shade700,
+                    color: isIncome
+                        ? Colors.green.shade700
+                        : Colors.red.shade700,
                   ),
                 ),
                 title: Text(
                   adj.description,
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                subtitle: Text('Date: ${DateFormat('MMM d, yyyy').format(adj.date)}'),
+                subtitle: Text(
+                  'Date: ${DateFormat('MMM d, yyyy').format(adj.date)}',
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1978,7 +2244,9 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
                       '${isIncome ? '+' : '-'} ${currencyFormatter.format(adj.amount)}',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: isIncome ? Colors.green.shade700 : Colors.red.shade700,
+                        color: isIncome
+                            ? Colors.green.shade700
+                            : Colors.red.shade700,
                       ),
                     ),
                     // U - UPDATE/EDIT
@@ -1988,7 +2256,11 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
                     ),
                     // D - DELETE
                     IconButton(
-                      icon: const Icon(Icons.delete, size: 20, color: Colors.red),
+                      icon: const Icon(
+                        Icons.delete,
+                        size: 20,
+                        color: Colors.red,
+                      ),
                       onPressed: () => _deleteAdjustment(adj.id!),
                     ),
                   ],
@@ -2008,6 +2280,7 @@ class _AdjustmentManagementScreenState extends State<AdjustmentManagementScreen>
     );
   }
 }
+
 // CRITICAL: Updated constructor to accept refresh logic
 class CreateAdjustmentScreen extends StatefulWidget {
   final String token;
@@ -2026,6 +2299,7 @@ class CreateAdjustmentScreen extends StatefulWidget {
   @override
   State<CreateAdjustmentScreen> createState() => _CreateAdjustmentScreenState();
 }
+
 class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
   final _formKey = GlobalKey<FormState>();
 
@@ -2043,7 +2317,8 @@ class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
   void initState() {
     super.initState();
     _currentAccessToken = widget.token; // Initialize local token
-    _adjustmentData = widget.initialAdjustment ??
+    _adjustmentData =
+        widget.initialAdjustment ??
         Adjustment(
           shop: widget.shopId,
           date: DateTime.now(),
@@ -2060,7 +2335,12 @@ class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
   };
 
   // CRITICAL FIX: Reusable API Call Helper with Token Refresh/Retry
-  Future<http.Response> _makeApiCall(String method, String url, {Map<String, dynamic>? payload, int retryCount = 0}) async {
+  Future<http.Response> _makeApiCall(
+    String method,
+    String url, {
+    Map<String, dynamic>? payload,
+    int retryCount = 0,
+  }) async {
     final uri = Uri.parse(url);
     final body = payload != null ? jsonEncode(payload) : null;
     http.Response response;
@@ -2087,11 +2367,17 @@ class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
       if (success) {
         final prefs = await SharedPreferences.getInstance();
         if (mounted) {
-          setState(() { // Update local token state
+          setState(() {
+            // Update local token state
             _currentAccessToken = prefs.getString('accessToken') ?? '';
           });
         }
-        return _makeApiCall(method, url, payload: payload, retryCount: 1); // Retry
+        return _makeApiCall(
+          method,
+          url,
+          payload: payload,
+          retryCount: 1,
+        ); // Retry
       }
     }
     return response;
@@ -2147,16 +2433,20 @@ class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Adjustment ${isEditing ? 'updated' : 'recorded'} successfully!')),
+          SnackBar(
+            content: Text(
+              'Adjustment ${isEditing ? 'updated' : 'recorded'} successfully!',
+            ),
+          ),
         );
         // Return true to signal the list screen to refresh and update its token state
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -2166,7 +2456,9 @@ class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
   @override
   Widget build(BuildContext context) {
     // ... (rest of the build method is unchanged)
-    final title = widget.initialAdjustment == null ? 'Add New Adjustment' : 'Edit Adjustment';
+    final title = widget.initialAdjustment == null
+        ? 'Add New Adjustment'
+        : 'Edit Adjustment';
     final isEditing = widget.initialAdjustment != null;
 
     return Scaffold(
@@ -2222,7 +2514,9 @@ class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
 
               // Amount Field
               TextFormField(
-                initialValue: _adjustmentData.amount > 0 ? _adjustmentData.amount.toString() : '',
+                initialValue: _adjustmentData.amount > 0
+                    ? _adjustmentData.amount.toString()
+                    : '',
                 decoration: const InputDecoration(
                   labelText: 'Amount',
                   hintText: 'e.g., 50.00',
@@ -2230,9 +2524,12 @@ class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
                   prefixText: '\$',
                   prefixIcon: Icon(Icons.monetization_on),
                 ),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Please enter an amount.';
+                  if (value == null || value.isEmpty)
+                    return 'Please enter an amount.';
                   final amount = double.tryParse(value);
                   if (amount == null) return 'Amount must be a valid number.';
                   return null;
@@ -2255,14 +2552,16 @@ class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
                 initialValue: _adjustmentData.description,
                 decoration: const InputDecoration(
                   labelText: 'Description',
-                  hintText: 'e.g., Inventory shortage found during monthly count',
+                  hintText:
+                      'e.g., Inventory shortage found during monthly count',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.description),
                   alignLabelWithHint: true,
                 ),
                 maxLines: 3,
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Please provide a description.';
+                  if (value == null || value.isEmpty)
+                    return 'Please provide a description.';
                   return null;
                 },
                 onSaved: (value) {
@@ -2282,9 +2581,19 @@ class _CreateAdjustmentScreenState extends State<CreateAdjustmentScreen> {
               ElevatedButton.icon(
                 onPressed: _isLoading ? null : _submitAdjustment,
                 icon: _isLoading
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : Icon(isEditing ? Icons.save : Icons.add_circle_outline),
-                label: Text(_isLoading ? 'SAVING...' : isEditing ? 'SAVE CHANGES' : 'RECORD ADJUSTMENT'),
+                label: Text(
+                  _isLoading
+                      ? 'SAVING...'
+                      : isEditing
+                      ? 'SAVE CHANGES'
+                      : 'RECORD ADJUSTMENT',
+                ),
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 50),
                 ),

@@ -14,15 +14,15 @@ def update_product_stock(sender, instance, **kwargs):
     product.stock_quantity = total_stock
     product.save()
 
-# Reduce variant stock when an order is created
-@receiver(post_save, sender=OrderItem)
-def reduce_variant_stock(sender, instance, created, **kwargs):
-    if created and hasattr(instance, 'variant') and instance.variant:
-        variant = instance.variant
-        variant.stock_quantity -= instance.quantity
-        if variant.stock_quantity < 0:
-            variant.stock_quantity = 0
-        variant.save()
+# # Reduce variant stock when an order is created
+# @receiver(post_save, sender=OrderItem)
+# def reduce_variant_stock(sender, instance, created, **kwargs):
+#     if created and hasattr(instance, 'variant') and instance.variant:
+#         variant = instance.variant
+#         variant.stock_quantity -= instance.quantity
+#         if variant.stock_quantity < 0:
+#             variant.stock_quantity = 0
+#         variant.save()
 
 # Reduce variant stock for waste
 @receiver(post_save, sender=WasteProduct)

@@ -232,7 +232,7 @@ class _BrandFormScreenState extends State<BrandFormScreen> {
     if (widget.brand != null) {
       nameController.text = widget.brand!["name"];
       isActive = widget.brand!["is_active"];
-      selectedShopId = widget.brand!["shop"]?["id"];
+      // selectedShopId = widget.brand!["shop"]?["id"];
     }
     _loadUserShopIdAndFetchShops();
   }

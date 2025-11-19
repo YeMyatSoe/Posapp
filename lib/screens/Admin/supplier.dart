@@ -70,7 +70,9 @@ class _SupplierScreenState extends State<SupplierScreen> {
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/login');
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Session expired. Please log in again.")),
+          const SnackBar(
+            content: Text("Session expired. Please log in again."),
+          ),
         );
       }
       return false;
@@ -98,10 +100,16 @@ class _SupplierScreenState extends State<SupplierScreen> {
   // ------------------------------
   Future<void> fetchSuppliers() async {
     setState(() => isLoading = true);
-    http.Response response = await http.get(Uri.parse(_SUPPLIERS_API_URL), headers: headers);
+    http.Response response = await http.get(
+      Uri.parse(_SUPPLIERS_API_URL),
+      headers: headers,
+    );
 
     if (response.statusCode == 401 && await _refreshTokenUtility()) {
-      response = await http.get(Uri.parse(_SUPPLIERS_API_URL), headers: headers);
+      response = await http.get(
+        Uri.parse(_SUPPLIERS_API_URL),
+        headers: headers,
+      );
     }
 
     if (response.statusCode == 200) {
@@ -122,7 +130,9 @@ class _SupplierScreenState extends State<SupplierScreen> {
       if (mounted) {
         setState(() => isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to load suppliers: ${response.statusCode}")),
+          SnackBar(
+            content: Text("Failed to load suppliers: ${response.statusCode}"),
+          ),
         );
       }
     }
@@ -132,10 +142,16 @@ class _SupplierScreenState extends State<SupplierScreen> {
   // DELETE SUPPLIER
   // ------------------------------
   Future<void> deleteSupplier(int id) async {
-    http.Response response = await http.delete(Uri.parse("$_SUPPLIERS_API_URL$id/"), headers: headers);
+    http.Response response = await http.delete(
+      Uri.parse("$_SUPPLIERS_API_URL$id/"),
+      headers: headers,
+    );
 
     if (response.statusCode == 401 && await _refreshTokenUtility()) {
-      response = await http.delete(Uri.parse("$_SUPPLIERS_API_URL$id/"), headers: headers);
+      response = await http.delete(
+        Uri.parse("$_SUPPLIERS_API_URL$id/"),
+        headers: headers,
+      );
     }
 
     if (response.statusCode == 204) {
@@ -143,7 +159,9 @@ class _SupplierScreenState extends State<SupplierScreen> {
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to delete supplier: ${response.body}")),
+          SnackBar(
+            content: Text("Failed to delete supplier: ${response.body}"),
+          ),
         );
       }
     }
@@ -163,6 +181,90 @@ class _SupplierScreenState extends State<SupplierScreen> {
     );
   }
 
+  Future<void> _showPayDialog(Map supplier) async {
+    final TextEditingController amountController = TextEditingController();
+    final double remaining = supplier["remaining_amount"]?.toDouble() ?? 0;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text("Pay Remaining to ${supplier["name"]}"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text("Remaining: \$${remaining.toStringAsFixed(2)}"),
+              const SizedBox(height: 10),
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "Enter amount to pay",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final amount =
+                    double.tryParse(amountController.text.trim()) ?? 0;
+                if (amount <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Enter a valid amount")),
+                  );
+                  return;
+                }
+
+                Navigator.pop(ctx);
+                await _payRemainingAmount(supplier["id"], amount);
+              },
+              child: const Text("Pay"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _payRemainingAmount(int supplierId, double amount) async {
+    final url = Uri.parse("$_SUPPLIERS_API_URL$supplierId/pay/");
+    http.Response response = await http.post(
+      url,
+      headers: headers,
+      body: jsonEncode({"amount": amount}),
+    );
+
+    if (response.statusCode == 401 && await _refreshTokenUtility()) {
+      response = await http.post(
+        url,
+        headers: headers,
+        body: jsonEncode({"amount": amount}),
+      );
+    }
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Payment successful. Remaining: \$${data['remaining_amount']}",
+          ),
+        ),
+      );
+      fetchSuppliers(); // refresh the table
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to pay: ${response.body}")),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -175,49 +277,71 @@ class _SupplierScreenState extends State<SupplierScreen> {
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(
-          columns: const [
-            DataColumn(label: Text("ID")),
-            DataColumn(label: Text("Name")),
-            DataColumn(label: Text("Phone")),
-            DataColumn(label: Text("Email")),
-            DataColumn(label: Text("Address")),
-            DataColumn(label: Text("Shop")),
-            DataColumn(label: Text("Remaining Amount")),
-            DataColumn(label: Text("Actions")),
-          ],
-          rows: suppliers.map((supplier) {
-            return DataRow(cells: [
-              DataCell(Text(supplier["id"].toString())),
-              DataCell(Text(supplier["name"] ?? "-")),
-              DataCell(Text(supplier["phone"] ?? "-")),
-              DataCell(Text(supplier["email"] ?? "-")),
-              DataCell(Text(supplier["address"] ?? "-")),
-              DataCell(Text(supplier["shop"] != null ? supplier["shop"]["name"] : "-")),
-              DataCell(Text(supplier["remaining_amount"] != null
-                  ? "\$${supplier["remaining_amount"].toString()}"
-                  : "\$0")),
-              DataCell(Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.edit, color: Colors.blue),
-                    onPressed: () => goToFormScreen(supplier),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    onPressed: () => deleteSupplier(supplier["id"]),
-                  ),
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text("ID")),
+                  DataColumn(label: Text("Name")),
+                  DataColumn(label: Text("Phone")),
+                  DataColumn(label: Text("Email")),
+                  DataColumn(label: Text("Address")),
+                  DataColumn(label: Text("Shop")),
+                  DataColumn(label: Text("Remaining Amount")),
+                  DataColumn(label: Text("Actions")),
                 ],
-              )),
-            ]);
-          }).toList(),
-        ),
-      ),
+                rows: suppliers.map((supplier) {
+                  return DataRow(
+                    cells: [
+                      DataCell(Text(supplier["id"].toString())),
+                      DataCell(Text(supplier["name"] ?? "-")),
+                      DataCell(Text(supplier["phone"] ?? "-")),
+                      DataCell(Text(supplier["email"] ?? "-")),
+                      DataCell(Text(supplier["address"] ?? "-")),
+                      DataCell(
+                        Text(
+                          supplier["shop"] != null
+                              ? supplier["shop"]["name"]
+                              : "-",
+                        ),
+                      ),
+                      DataCell(
+                        Text(
+                          supplier["remaining_amount"] != null
+                              ? "\$${supplier["remaining_amount"].toString()}"
+                              : "\$0",
+                        ),
+                      ),
+                      DataCell(
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit, color: Colors.blue),
+                              onPressed: () => goToFormScreen(supplier),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => deleteSupplier(supplier["id"]),
+                            ),
+                            if ((supplier["remaining_amount"] ?? 0) > 0)
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.attach_money,
+                                  color: Colors.green,
+                                ),
+                                tooltip: "Pay Remaining",
+                                onPressed: () => _showPayDialog(supplier),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
     );
   }
 }
-
 
 // ============================
 // 3. SupplierFormScreen Widget (MODIFIED for Read-Only Shop)
@@ -281,13 +405,17 @@ class _SupplierFormScreenState extends State<SupplierFormScreen> {
 
     // Auto-select logic: Only for new suppliers if a user shop ID exists
     if (widget.supplier == null && _loggedInUserShopId != null) {
-      final isValidShop = shops.any((shop) => shop["id"] == _loggedInUserShopId);
+      final isValidShop = shops.any(
+        (shop) => shop["id"] == _loggedInUserShopId,
+      );
 
       if (isValidShop) {
         if (mounted) {
           setState(() {
             selectedShopId = _loggedInUserShopId;
-            debugPrint('DEBUG: SupplierForm Auto-selected shop ID: $selectedShopId');
+            debugPrint(
+              'DEBUG: SupplierForm Auto-selected shop ID: $selectedShopId',
+            );
           });
         }
       }
@@ -300,7 +428,11 @@ class _SupplierFormScreenState extends State<SupplierFormScreen> {
   };
 
   // Helper function to make API calls (GET, POST, PUT)
-  Future<http.Response> _makeApiCall(String method, Uri url, {Map<String, dynamic>? payload}) async {
+  Future<http.Response> _makeApiCall(
+    String method,
+    Uri url, {
+    Map<String, dynamic>? payload,
+  }) async {
     final body = payload != null ? jsonEncode(payload) : null;
     switch (method) {
       case 'GET':
@@ -316,7 +448,10 @@ class _SupplierFormScreenState extends State<SupplierFormScreen> {
 
   // FETCH SHOPS
   Future<void> fetchShops() async {
-    http.Response response = await _makeApiCall('GET', Uri.parse(_SHOPS_API_URL));
+    http.Response response = await _makeApiCall(
+      'GET',
+      Uri.parse(_SHOPS_API_URL),
+    );
 
     // Check for 401 and attempt refresh
     if (response.statusCode == 401) {
@@ -338,7 +473,9 @@ class _SupplierFormScreenState extends State<SupplierFormScreen> {
     } else if (response.statusCode != 401) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to load shops: ${response.statusCode}")),
+          SnackBar(
+            content: Text("Failed to load shops: ${response.statusCode}"),
+          ),
         );
       }
     }
@@ -405,7 +542,9 @@ class _SupplierFormScreenState extends State<SupplierFormScreen> {
     final bool isFetchingShops = shops.isEmpty && _loggedInUserShopId == null;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.supplier == null ? "Add Supplier" : "Edit Supplier")),
+      appBar: AppBar(
+        title: Text(widget.supplier == null ? "Add Supplier" : "Edit Supplier"),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Form(
@@ -434,35 +573,43 @@ class _SupplierFormScreenState extends State<SupplierFormScreen> {
               isFetchingShops
                   ? const Center(child: LinearProgressIndicator())
                   : DropdownButtonFormField<int>(
-                value: selectedShopId,
-                items: shops.map<DropdownMenuItem<int>>((shop) {
-                  return DropdownMenuItem(
-                    value: shop["id"],
-                    child: Text(
-                      shop["name"],
-                      style: TextStyle(
-                        color: isReadOnlyShop ? Colors.grey[700] : Colors.black,
-                      ),
-                    ),
-                  );
-                }).toList(),
-                // 🎯 KEY CHANGE: Disable `onChanged` if read-only
-                onChanged: isReadOnlyShop
-                    ? null
-                    : (value) => setState(() => selectedShopId = value),
+                      value: selectedShopId,
+                      items: shops.map<DropdownMenuItem<int>>((shop) {
+                        return DropdownMenuItem(
+                          value: shop["id"],
+                          child: Text(
+                            shop["name"],
+                            style: TextStyle(
+                              color: isReadOnlyShop
+                                  ? Colors.grey[700]
+                                  : Colors.black,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                      // 🎯 KEY CHANGE: Disable `onChanged` if read-only
+                      onChanged: isReadOnlyShop
+                          ? null
+                          : (value) => setState(() => selectedShopId = value),
 
-                decoration: InputDecoration(
-                  labelText: "Shop",
-                  // Visual cue for read-only state
-                  filled: isReadOnlyShop,
-                  fillColor: isReadOnlyShop ? Colors.grey[200] : null,
-                  // Disable the suffix arrow and add lock icon when read-only
-                  suffixIcon: isReadOnlyShop ? const Icon(Icons.lock_outline, size: 20) : null,
-                ),
-                validator: (value) => value == null ? "Please select a shop" : null,
-              ),
+                      decoration: InputDecoration(
+                        labelText: "Shop",
+                        // Visual cue for read-only state
+                        filled: isReadOnlyShop,
+                        fillColor: isReadOnlyShop ? Colors.grey[200] : null,
+                        // Disable the suffix arrow and add lock icon when read-only
+                        suffixIcon: isReadOnlyShop
+                            ? const Icon(Icons.lock_outline, size: 20)
+                            : null,
+                      ),
+                      validator: (value) =>
+                          value == null ? "Please select a shop" : null,
+                    ),
               const SizedBox(height: 20),
-              ElevatedButton(onPressed: saveSupplier, child: const Text("Save")),
+              ElevatedButton(
+                onPressed: saveSupplier,
+                child: const Text("Save"),
+              ),
             ],
           ),
         ),

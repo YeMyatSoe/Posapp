@@ -317,7 +317,7 @@ class _CategoryFormScreenState extends State<CategoryFormScreen> {
     if (widget.category != null) {
       nameController.text = widget.category!["name"];
       isActive = widget.category!["is_active"];
-      selectedShopId = widget.category!["shop"]?["id"];
+      // selectedShopId = widget.category!["shop"]?["id"];
     }
     _loadUserShopIdAndFetchShops();
   }
